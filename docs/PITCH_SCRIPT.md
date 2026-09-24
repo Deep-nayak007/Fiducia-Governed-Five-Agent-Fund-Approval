@@ -36,6 +36,8 @@ The script is intentionally compact enough to leave time for clicks and pauses. 
 >
 > Next I run DATA. Its Sharpe ratio is blank. Fiducia checks composite identity, queries only the approved catalog, restores that field, and reruns the Analyst—retry one of two. Finance raises a peer-cost warning, so the Sponsor returns **approval with conditions** and pauses for a human. The Agent workspace shows the tool ledger; the Audit tab verifies the tamper-evident chain.
 
+Presenter guardrail: leave **Lock seeded identity** enabled and click **Restore scenario defaults** before the live DATA run. Confirm its asset class reads **US Equity Index**. A changed identity correctly blocks enrichment and routes to human review, but that is the adversarial—not the rehearsed self-correction—path.
+
 **Checkpoint:** At 1:45, the human-approval modal is visible and the cursor is still.
 
 ### 1:45–2:30 — Enterprise value and governance

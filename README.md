@@ -18,6 +18,11 @@ python3 -m venv .venv
 
 Open the URL printed by Streamlit, then run these scenarios:
 
+Keep **Lock seeded identity** enabled for the rehearsed routes. Use **Restore
+scenario defaults** before a live run if a field was edited. In particular,
+`DATA` must remain `US Equity Index`; changing an identity field intentionally
+blocks catalog enrichment and demonstrates the fail-closed route.
+
 | Scenario | What it proves | Expected route |
 |---|---|---|
 | `SUNX` | Complete, low-cost golden path | `APPROVE`, no human touch |

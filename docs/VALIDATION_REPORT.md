@@ -9,12 +9,12 @@
 | Check | Result | Evidence boundary |
 |---|---|---|
 | Python compilation | Pass | `app.py`, `agentcore_app.py`, `fiducia/`, and `scripts/*.py` compiled without error |
-| Automated unit/integration suite | **46 passed / 46 collected** | 4 audit, 10 ingress, 4 policy, and 28 workflow cases |
+| Automated unit/integration suite | **48 passed / 48 collected** | 2 Streamlit UI, 4 audit, 10 ingress, 4 policy, and 28 workflow cases |
 | Real LangGraph invocation | Pass | Installed LangGraph executed the workflow for all seeded cases; the no-LangGraph fallback also has a dedicated test |
 | All 10 seeded scenarios | Pass with expected routes | Reproduced with deterministic/offline narrative mode |
 | Streamlit process startup | Pass | Headless server started; root returned HTTP `200` |
 | Streamlit health endpoint | Pass | `/_stcore/health` returned `ok` |
-| Streamlit AppTest smoke | Pass | Initial render; SUNX, DATA, INJX, and SPECX submissions; and SPECX dialog open completed with zero app exceptions. The dialog exposed Reviewer ID, Second approver ID, attestation, and `Attest & record decision`. This is framework-level smoke coverage, not a real-browser or end-to-end identity/authentication test. |
+| Streamlit AppTest smoke | Pass | Initial render; SUNX, DATA, INJX, and SPECX submissions; SPECX dialog open; and committed DATA identity-reset/fail-closed regressions completed with zero app exceptions. The dialog exposed Reviewer ID, Second approver ID, attestation, and `Attest & record decision`. This is framework-level smoke coverage, not a real-browser or end-to-end identity/authentication test. |
 | Audit integrity controls | Pass | Hash-chain tampering is detected; signed mode rejects a stripped HMAC |
 | HITL state controls | Pass | Review-state precondition, required reason/attestation, distinct second ID for reject-to-approve, and no second final action |
 | Strict external request validator | Pass | Tests cover boolean-as-number values, an unsupported envelope field, malformed plan objects, and invalid identity types; the same validator also rejects unsupported fund fields and invalid model mode |
@@ -25,9 +25,10 @@ Commands reproduced:
 
 ```bash
 .venv/bin/pytest -q
-# 46 passed
+# 48 passed
 
 .venv/bin/pytest --collect-only -q
+# tests/test_app.py: 2
 # tests/test_audit.py: 4
 # tests/test_ingress.py: 10
 # tests/test_policy.py: 4

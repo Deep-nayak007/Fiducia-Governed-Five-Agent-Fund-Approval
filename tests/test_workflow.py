@@ -31,6 +31,15 @@ def test_missing_metric_is_repaired_once(tmp_path, funds):
     assert state["retries"] == 1
     assert state["fund"]["sharpe_ratio"] == 1.01
     assert state["missing_fields"] == []
+    assert state["conflicts"] == []
+    assert state["recommendation"] == "APPROVE_WITH_CONDITIONS"
+    assert state["completed_agents"] == [
+        "analyst",
+        "compliance",
+        "governance",
+        "finance",
+        "decision_owner",
+    ]
 
 
 def test_missing_fee_fails_closed_after_two_retries(tmp_path, funds):

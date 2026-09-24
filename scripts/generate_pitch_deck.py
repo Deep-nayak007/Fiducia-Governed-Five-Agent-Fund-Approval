@@ -432,7 +432,7 @@ def slide_demo(prs: Presentation):
     add_title(
         slide,
         "The demo proves behavior—not promises.",
-        "Run SUNX. Break DATA. Open the governed human checkpoint.",
+        "Run SUNX. Repair DATA. Open the governed human checkpoint.",
         title_size=30,
     )
 

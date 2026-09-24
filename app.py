@@ -87,7 +87,7 @@ def fund_catalog() -> list[dict[str, Any]]:
 
 SCENARIO_LABELS = {
     "SUNX": "Clean case · auto-approval",
-    "DATA": "Missing metric · self-correction",
+    "DATA": "Missing Sharpe → repair 1/2 → conditional approval",
     "ALPHX": "Fee exception · escalation",
     "SPECX": "Hard stops · reject recommendation",
     "CONFX": "Source conflict · human review",
@@ -134,9 +134,24 @@ def render_agent_graph(state: dict[str, Any] | None) -> str:
     retry = ""
     if state and state.get("retries"):
         repaired = sum(len(item.get("repaired_fields", [])) for item in state.get("enrichment_history", []))
+        identity_mismatches = sorted(
+            {
+                field
+                for item in state.get("enrichment_history", [])
+                for field in item.get("identity_mismatches", [])
+            }
+        )
+        identity_guard = (
+            " Identity guard blocked enrichment on: "
+            + ", ".join(identity_mismatches)
+            + ". Restore scenario defaults or review it as a custom case."
+            if identity_mismatches
+            else ""
+        )
         retry = (
             f'<div class="correction">↻ Self-correction loop executed {state["retries"]} time(s); '
-            f'{repaired} field(s) restored from an approved synthetic source.</div>'
+            f'{repaired} field(s) restored from an approved synthetic source.'
+            f'{safe(identity_guard)}</div>'
         )
     return '<div class="agent-flow">' + "".join(nodes) + "</div>" + retry
 
@@ -208,6 +223,15 @@ with st.sidebar:
         list(fund_by_ticker),
         format_func=lambda ticker: f"{ticker} · {SCENARIO_LABELS.get(ticker, 'Custom scenario')}",
     )
+    lock_seeded_identity = st.checkbox(
+        "Lock seeded identity",
+        value=True,
+        help=(
+            "Recommended for the live demo. It prevents ticker, fund name, product, "
+            "or asset-class edits from invalidating the approved enrichment join."
+        ),
+    )
+    reset_scenario = st.button("Restore scenario defaults", width="stretch")
     model_mode = st.radio(
         "Narrative engine",
         ["offline", "bedrock"],
@@ -223,10 +247,17 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-if st.session_state.get("loaded_ticker") != selected_ticker:
+scenario_changed = st.session_state.get("loaded_ticker") != selected_ticker
+if scenario_changed or reset_scenario:
     st.session_state.loaded_ticker = selected_ticker
     st.session_state.draft = dict(fund_by_ticker[selected_ticker])
+    st.session_state.form_epoch = int(st.session_state.get("form_epoch", 0)) + 1
     st.session_state.pop("workflow", None)
+    if reset_scenario:
+        st.rerun()
+
+form_token = f"{selected_ticker}_{int(st.session_state.get('form_epoch', 0))}"
+identity_token = f"{form_token}_{'locked' if lock_seeded_identity else 'custom'}"
 
 draft = st.session_state.draft
 state = st.session_state.get("workflow")
@@ -262,32 +293,62 @@ with cockpit_tab:
     form_col, result_col = st.columns([0.92, 1.28], gap="large")
     with form_col:
         st.markdown("### Fund nomination")
-        st.caption("Edit any field to create a custom case. Empty text fields remain missing—never coerced to zero.")
-        with st.form("fund_form"):
+        st.caption(
+            "Edit metrics to create a custom case; turn off the identity lock to change "
+            "the fund identity. Empty text fields remain missing—never coerced to zero."
+        )
+        if lock_seeded_identity:
+            st.caption(
+                "Demo-safe identity lock is ON. Turn it off in the sidebar only when "
+                "you intentionally want to test a custom identity or fail-closed route."
+            )
+        with st.form(f"fund_form_{form_token}"):
             first, second = st.columns(2)
-            ticker = first.text_input("Ticker", value=str(draft.get("ticker", "")))
-            fund_name = second.text_input("Fund name", value=str(draft.get("fund_name", "")))
-            fund_type = first.selectbox("Product", ["Mutual Fund", "ETF", "Leveraged ETF", "Inverse ETF"], index=max(0, ["Mutual Fund", "ETF", "Leveraged ETF", "Inverse ETF"].index(str(draft.get("fund_type", "Mutual Fund"))) if str(draft.get("fund_type", "Mutual Fund")) in ["Mutual Fund", "ETF", "Leveraged ETF", "Inverse ETF"] else 0))
+            ticker = first.text_input(
+                "Ticker",
+                value=str(draft.get("ticker", "")),
+                disabled=lock_seeded_identity,
+                key=f"{identity_token}_ticker",
+            )
+            fund_name = second.text_input(
+                "Fund name",
+                value=str(draft.get("fund_name", "")),
+                disabled=lock_seeded_identity,
+                key=f"{identity_token}_fund_name",
+            )
+            fund_type = first.selectbox(
+                "Product",
+                ["Mutual Fund", "ETF", "Leveraged ETF", "Inverse ETF"],
+                index=max(0, ["Mutual Fund", "ETF", "Leveraged ETF", "Inverse ETF"].index(str(draft.get("fund_type", "Mutual Fund"))) if str(draft.get("fund_type", "Mutual Fund")) in ["Mutual Fund", "ETF", "Leveraged ETF", "Inverse ETF"] else 0),
+                disabled=lock_seeded_identity,
+                key=f"{identity_token}_fund_type",
+            )
             asset_options = ["US Equity Index", "US Equity Active", "International Equity", "Investment Grade Bond", "Target Date", "Balanced", "Other"]
-            asset = second.selectbox("Asset class", asset_options, index=asset_options.index(str(draft.get("asset_class", "Other"))) if str(draft.get("asset_class", "Other")) in asset_options else len(asset_options) - 1)
-            nav = first.number_input("NAV ($)", min_value=0.0, value=float(draft.get("nav") or 0.0), step=0.01)
-            expense = second.number_input("Expense ratio (%)", min_value=0.0, value=float(draft.get("expense_ratio") or 0.0), step=0.01, format="%.2f")
-            sharpe_text = first.text_input("Sharpe ratio", value="" if draft.get("sharpe_ratio") in (None, "") else str(draft.get("sharpe_ratio")))
-            fee_text = second.text_input("Total 12b-1 fee (%)", value="" if draft.get("fee_12b1") in (None, "") else str(draft.get("fee_12b1")))
-            turnover = first.number_input("Turnover (%)", min_value=0.0, value=float(draft.get("turnover_rate") or 0.0), step=1.0)
-            aum = second.number_input("AUM ($MM)", min_value=0.0, value=float(draft.get("aum_millions") or 0.0), step=10.0)
-            history = first.number_input("Track record (years)", min_value=0.0, value=float(draft.get("track_record_years") or 0.0), step=0.5)
-            risk = second.slider("Fund risk score", 1, 10, int(float(draft.get("risk_score") or 5)))
+            asset = second.selectbox(
+                "Asset class",
+                asset_options,
+                index=asset_options.index(str(draft.get("asset_class", "Other"))) if str(draft.get("asset_class", "Other")) in asset_options else len(asset_options) - 1,
+                disabled=lock_seeded_identity,
+                key=f"{identity_token}_asset_class",
+            )
+            nav = first.number_input("NAV ($)", min_value=0.0, value=float(draft.get("nav") or 0.0), step=0.01, key=f"{form_token}_nav")
+            expense = second.number_input("Expense ratio (%)", min_value=0.0, value=float(draft.get("expense_ratio") or 0.0), step=0.01, format="%.2f", key=f"{form_token}_expense_ratio")
+            sharpe_text = first.text_input("Sharpe ratio", value="" if draft.get("sharpe_ratio") in (None, "") else str(draft.get("sharpe_ratio")), key=f"{form_token}_sharpe_ratio")
+            fee_text = second.text_input("Total 12b-1 fee (%)", value="" if draft.get("fee_12b1") in (None, "") else str(draft.get("fee_12b1")), key=f"{form_token}_fee_12b1")
+            turnover = first.number_input("Turnover (%)", min_value=0.0, value=float(draft.get("turnover_rate") or 0.0), step=1.0, key=f"{form_token}_turnover_rate")
+            aum = second.number_input("AUM ($MM)", min_value=0.0, value=float(draft.get("aum_millions") or 0.0), step=10.0, key=f"{form_token}_aum_millions")
+            history = first.number_input("Track record (years)", min_value=0.0, value=float(draft.get("track_record_years") or 0.0), step=0.5, key=f"{form_token}_track_record_years")
+            risk = second.slider("Fund risk score", 1, 10, int(float(draft.get("risk_score") or 5)), key=f"{form_token}_risk_score")
             status_options = ["Clear", "Under Review", "Restricted"]
-            regulatory_status = first.selectbox("Control status", status_options, index=status_options.index(str(draft.get("regulatory_status", "Clear"))) if str(draft.get("regulatory_status", "Clear")) in status_options else 0)
-            as_of = second.text_input("As-of date", value=str(draft.get("as_of_date", "2026-09-22")))
+            regulatory_status = first.selectbox("Control status", status_options, index=status_options.index(str(draft.get("regulatory_status", "Clear"))) if str(draft.get("regulatory_status", "Clear")) in status_options else 0, key=f"{form_token}_regulatory_status")
+            as_of = second.text_input("As-of date", value=str(draft.get("as_of_date", "2026-09-22")), key=f"{form_token}_as_of_date")
             with st.expander("Fee components & untrusted evidence"):
                 fee_left, fee_right = st.columns(2)
-                distribution_text = fee_left.text_input("Distribution component (%)", value="" if draft.get("distribution_12b1_fee") in (None, "") else str(draft.get("distribution_12b1_fee")))
-                service_text = fee_right.text_input("Service component (%)", value="" if draft.get("service_fee") in (None, "") else str(draft.get("service_fee")))
-                sales_load = fee_left.number_input("Front-end sales load (%)", min_value=0.0, value=float(draft.get("sales_load_pct") or 0.0), step=0.25)
-                breakpoint_schedule = fee_right.text_input("Breakpoints (threshold:load;…)", value=str(draft.get("breakpoint_schedule", "")), placeholder="250000:3.5;500000:2.5;1000000:1.5")
-                evidence_note = st.text_area("Evidence note (isolated as data)", value=str(draft.get("evidence_note", "")))
+                distribution_text = fee_left.text_input("Distribution component (%)", value="" if draft.get("distribution_12b1_fee") in (None, "") else str(draft.get("distribution_12b1_fee")), key=f"{form_token}_distribution_12b1_fee")
+                service_text = fee_right.text_input("Service component (%)", value="" if draft.get("service_fee") in (None, "") else str(draft.get("service_fee")), key=f"{form_token}_service_fee")
+                sales_load = fee_left.number_input("Front-end sales load (%)", min_value=0.0, value=float(draft.get("sales_load_pct") or 0.0), step=0.25, key=f"{form_token}_sales_load_pct")
+                breakpoint_schedule = fee_right.text_input("Breakpoints (threshold:load;…)", value=str(draft.get("breakpoint_schedule", "")), placeholder="250000:3.5;500000:2.5;1000000:1.5", key=f"{form_token}_breakpoint_schedule")
+                evidence_note = st.text_area("Evidence note (isolated as data)", value=str(draft.get("evidence_note", "")), key=f"{form_token}_evidence_note")
             submitted = st.form_submit_button("Run governed approval", type="primary", width="stretch")
 
         if submitted:
@@ -322,6 +383,21 @@ with cockpit_tab:
             except ValueError:
                 st.error("Sharpe ratio and fee fields must be numbers or blank.")
             else:
+                expected_identity = fund_by_ticker.get(submitted_fund["ticker"])
+                identity_mismatches = []
+                if expected_identity:
+                    for identity_field in ("fund_name", "fund_type", "asset_class"):
+                        submitted_value = str(submitted_fund.get(identity_field, "")).strip().casefold()
+                        expected_value = str(expected_identity.get(identity_field, "")).strip().casefold()
+                        if not submitted_value or submitted_value != expected_value:
+                            identity_mismatches.append(identity_field)
+                if identity_mismatches:
+                    st.warning(
+                        "Seed identity was modified ("
+                        + ", ".join(identity_mismatches)
+                        + "). Approved-source enrichment will intentionally fail closed; "
+                        "use ‘Restore scenario defaults’ for the rehearsed route."
+                    )
                 live = st.empty()
                 with st.status("Executing bounded agent graph…", expanded=True) as run_status:
                     final_state = None
