@@ -432,7 +432,7 @@ def slide_demo(prs: Presentation):
     add_title(
         slide,
         "The demo proves behavior—not promises.",
-        "Run SUNX. Repair DATA. Open the governed human checkpoint.",
+        "Run DATA. Watch one bounded repair. Finish green.",
         title_size=30,
     )
 
@@ -444,11 +444,11 @@ def slide_demo(prs: Presentation):
     node_names = ["ANALYST", "COMPLIANCE", "GOVERNANCE", "FINANCE", "SPONSOR"]
     node_xs = [0.86, 2.40, 3.94, 5.48, 7.02]
     for i, (name, x) in enumerate(zip(node_names, node_xs)):
-        accent = GREEN if i < 4 else TEAL
-        add_rect(slide, x, 2.79, 1.32, 0.75, fill=DEEP_TEAL if i < 4 else PANEL_3, line=accent)
-        add_badge(slide, "✓" if i < 4 else "5", x + 0.10, 2.94, fill=accent, color=INK, diameter=0.27, size=7.5)
+        accent = GREEN
+        add_rect(slide, x, 2.79, 1.32, 0.75, fill=DEEP_TEAL, line=accent)
+        add_badge(slide, "✓", x + 0.10, 2.94, fill=accent, color=INK, diameter=0.27, size=7.5)
         add_text(slide, name, x + 0.44, 2.96, 0.77, 0.16, size=6.6, color=WHITE, bold=True)
-        add_text(slide, "COMPLETE" if i < 4 else "ACTIVE", x + 0.10, 3.25, 1.05, 0.14, size=5.8, color=accent, bold=True)
+        add_text(slide, "COMPLETE", x + 0.10, 3.25, 1.05, 0.14, size=5.8, color=accent, bold=True)
         if i < 4:
             add_chevron(slide, x + 1.33, 3.00, color="486579", size=13)
 
@@ -463,17 +463,17 @@ def slide_demo(prs: Presentation):
     add_rect(slide, 1.05, 5.45, 2.70, 0.43, fill=DEEP_TEAL, line="2D6E62")
     add_text(slide, "↻ validate again in the same case", 1.18, 5.55, 2.42, 0.18, size=8.3, color=GREEN, bold=True)
 
-    add_rect(slide, 4.29, 3.83, 4.52, 2.32, fill=PANEL_3, line=GOLD, line_width=1.2)
+    add_rect(slide, 4.29, 3.83, 4.52, 2.32, fill=PANEL_3, line=GREEN, line_width=1.2)
     add_text(slide, "AGENT RECOMMENDATION", 4.54, 4.06, 2.07, 0.20, size=8.5, color=MUTED, bold=True)
-    add_text(slide, "APPROVE WITH\nCONDITIONS", 4.54, 4.43, 3.36, 0.72, size=21, color=GOLD, bold=True, font=TITLE_FONT)
-    add_text(slide, "Risk 4 / 100  •  Confidence 0.94", 4.54, 5.39, 3.47, 0.22, size=10, color=SOFT_WHITE)
-    add_pill(slide, "AWAITING HUMAN REVIEW", 6.51, 5.48, 2.01, fill=DEEP_GOLD, line="765F2E", color=GOLD, size=7)
+    add_text(slide, "APPROVE", 4.54, 4.53, 3.36, 0.48, size=25, color=GREEN, bold=True, font=TITLE_FONT)
+    add_text(slide, "Risk 0 / 100  •  Confidence 0.94", 4.54, 5.39, 3.47, 0.22, size=10, color=SOFT_WHITE)
+    add_pill(slide, "COMPLETED · NO HUMAN TOUCH", 6.34, 5.48, 2.18, fill=DEEP_TEAL, line="2D6E62", color=GREEN, size=6.7)
 
     # Proof rail.
     proofs = [
         ("01", "GOLDEN PATH", "SUNX → APPROVE\nno human touch", GREEN),
         ("02", "RECOVERY", "DATA → retry 1/2\nsource recorded", TEAL),
-        ("03", "CONTROL", "condition → pause\nreason required", GOLD),
+        ("03", "CONTROL", "SPECX → REJECT\nhuman checkpoint", GOLD),
     ]
     for i, (num, label, copy, accent) in enumerate(proofs):
         y = 2.17 + i * 1.31

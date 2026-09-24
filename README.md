@@ -26,7 +26,7 @@ blocks catalog enrichment and demonstrates the fail-closed route.
 | Scenario | What it proves | Expected route |
 |---|---|---|
 | `SUNX` | Complete, low-cost golden path | `APPROVE`, no human touch |
-| `DATA` | Missing Sharpe ratio | Approved-source enrichment, retry `1/2`, then `APPROVE_WITH_CONDITIONS` + human checkpoint |
+| `DATA` | Missing Sharpe ratio | Approved-source enrichment, retry `1/2`, then green `APPROVE` with no human touch |
 | `ALPHX` | Expense ratio over internal category cap | `ESCALATE` to human |
 | `SPECX` | Status, suitability and cost hard stops | `REJECT` recommendation; no autonomous execution |
 | `CONFX` | Conflicting source evidence | Fail closed to human |

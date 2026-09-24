@@ -34,11 +34,11 @@ The script is intentionally compact enough to leave time for clicks and pauses. 
 >
 > Watch Compliance test versioned controls, Governance evaluate plan fit, and Finance compare fees, breakpoints, and benchmarks. The interface shows structured rationale and tool events—not private chain-of-thought.
 >
-> Next I run DATA. Its Sharpe ratio is blank. Fiducia checks composite identity, queries only the approved catalog, restores that field, and reruns the Analyst—retry one of two. Finance raises a peer-cost warning, so the Sponsor returns **approval with conditions** and pauses for a human. The Agent workspace shows the tool ledger; the Audit tab verifies the tamper-evident chain.
+> Next I run DATA. Its Sharpe ratio is blank. Fiducia checks composite identity, queries only the approved catalog, restores that field, and reruns the Analyst—retry one of two. All five specialists then pass their deterministic gates, so the Sponsor returns a green **APPROVE** with no human touch. The Agent workspace shows the tool ledger; the Audit tab verifies the tamper-evident chain. Exceptions still route to the governed human checkpoint, which I keep ready in SPECX for Q&A.
 
 Presenter guardrail: leave **Lock seeded identity** enabled and click **Restore scenario defaults** before the live DATA run. Confirm its asset class reads **US Equity Index**. A changed identity correctly blocks enrichment and routes to human review, but that is the adversarial—not the rehearsed self-correction—path.
 
-**Checkpoint:** At 1:45, the human-approval modal is visible and the cursor is still.
+**Checkpoint:** At 1:45, the green DATA decision and verified audit evidence are visible and the cursor is still.
 
 ### 1:45–2:30 — Enterprise value and governance
 
@@ -63,8 +63,9 @@ Presenter guardrail: leave **Lock seeded identity** enabled and click **Restore 
 ### Preloaded cases
 
 - **SUNX — golden path:** complete synthetic index mutual fund. Expected result: `APPROVE`, no human checkpoint.
-- **DATA — self-correction:** synthetic ETF with a blank Sharpe ratio. Expected result: one approved-catalog repair, `APPROVE_WITH_CONDITIONS`, then human checkpoint.
+- **DATA — self-correction:** synthetic ETF with a blank Sharpe ratio. Expected result: one approved-catalog repair, green `APPROVE`, no human checkpoint.
 - **Optional INJX — adversarial path:** injection text inside an evidence note. Expected result: scanner `BLOCKED`, `ESCALATE`, then human checkpoint.
+- **Optional SPECX — hard-stop path:** multiple deterministic failures. Expected result: `REJECT` recommendation and governed human checkpoint.
 
 Do not use a hard compliance failure as the only demo. A missing-data correction better proves self-correction; the hard-stop case can sit ready for Q&A.
 
@@ -78,9 +79,9 @@ Do not use a hard compliance failure as the only demo. A missing-data correction
 | 1:03 | Return to graph | Compliance, Governance and Finance complete as bounded stages | “three bounded domains” |
 | 1:12 | Select the pre-seeded `DATA` case and run | Blank Sharpe ratio and retry count `1/2` | “deliberate gap” |
 | 1:23 | Watch the approved-catalog repair event | Same case ID; Analyst reruns with one restored field | “repairs that field” |
-| 1:32 | Read the Decision packet | Risk, confidence and `APPROVE_WITH_CONDITIONS` | “Sponsor returns…” |
+| 1:32 | Read the Decision packet | Green `APPROVE`, risk `0/100`, confidence `94%` | “Sponsor returns…” |
 | 1:36 | Open `Audit & controls` | Verified chain, event table and policy hash | “Audit tab verifies…” |
-| 1:42 | Return to cockpit and open HITL modal | Approve/reject/return, rationale and attestation | “pauses for a human” |
+| 1:42 | Return to cockpit | Green approval plus repaired-field banner | “no human touch” |
 | 1:45 | Hands off mouse | Stable visual behind enterprise-value narration | “Fiducia scales…” |
 
 ### What not to show

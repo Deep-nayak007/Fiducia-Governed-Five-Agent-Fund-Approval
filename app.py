@@ -14,7 +14,7 @@ import streamlit as st
 from fiducia.audit import AuditLogger
 from fiducia.models import AGENT_LABELS, AGENT_ORDER
 from fiducia.policy import expense_benchmark, expense_cap, load_policy
-from fiducia.tools import load_funds
+from fiducia.tools import MOCK_PATH, load_funds
 from fiducia.workflow import apply_human_decision, stream_workflow
 
 
@@ -81,13 +81,16 @@ div[data-testid="stForm"] { border:1px solid #203b50; border-radius:16px; paddin
 
 
 @st.cache_data
-def fund_catalog() -> list[dict[str, Any]]:
+def fund_catalog(catalog_version: int) -> list[dict[str, Any]]:
+    """Load the catalog, invalidating Streamlit cache when the CSV changes."""
+
+    del catalog_version
     return load_funds()
 
 
 SCENARIO_LABELS = {
     "SUNX": "Clean case · auto-approval",
-    "DATA": "Missing Sharpe → repair 1/2 → conditional approval",
+    "DATA": "Missing Sharpe → repair 1/2 → green approval",
     "ALPHX": "Fee exception · escalation",
     "SPECX": "Hard stops · reject recommendation",
     "CONFX": "Source conflict · human review",
@@ -212,7 +215,7 @@ def human_review_dialog() -> None:
         st.rerun()
 
 
-funds = fund_catalog()
+funds = fund_catalog(MOCK_PATH.stat().st_mtime_ns)
 fund_by_ticker = {str(fund["ticker"]): fund for fund in funds}
 
 with st.sidebar:

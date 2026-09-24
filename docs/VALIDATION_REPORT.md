@@ -50,7 +50,7 @@ Commands reproduced:
 | ALPHX | Internal fee-cap exception | `ESCALATE` | Yes | `AWAITING_HUMAN_REVIEW` |
 | NEWB | Insufficient track record | `ESCALATE` | Yes | `AWAITING_HUMAN_REVIEW` |
 | SPECX | Status, suitability, and cost hard stops | `REJECT` recommendation | Yes | `AWAITING_HUMAN_REVIEW` |
-| DATA | Missing Sharpe ratio | Repair once, then `APPROVE_WITH_CONDITIONS` | Yes | `AWAITING_HUMAN_REVIEW` |
+| DATA | Missing Sharpe ratio | Repair once, then `APPROVE` | No | `COMPLETED` |
 | CONFX | Conflicting source flag and fee-boundary condition | `ESCALATE` | Yes | `AWAITING_HUMAN_REVIEW` |
 | INJX | Injection keywords in evidence note | `ESCALATE` | Yes | `AWAITING_HUMAN_REVIEW` |
 | BLANK | Fee evidence absent from approved synthetic sources | Retry `2/2`, then `ESCALATE` | Yes | `AWAITING_HUMAN_REVIEW` |

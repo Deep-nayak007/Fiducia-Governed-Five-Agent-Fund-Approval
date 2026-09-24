@@ -710,7 +710,7 @@ The project should **not** move to production if policy ownership is unclear, go
 ## 10. Demo cases that prove the controls
 
 1. **Green — SUNX:** the complete low-cost index fund passes all configured checks and returns `APPROVE` without a human checkpoint.
-2. **Yellow — DATA:** a blank Sharpe ratio remains null until an exact composite-identity match is found in the approved synthetic catalog. The Analyst reruns once; a peer-cost warning returns `APPROVE_WITH_CONDITIONS` and opens HITL.
+2. **Green — DATA:** a blank Sharpe ratio remains null until an exact composite-identity match is found in the approved synthetic catalog. The Analyst reruns once; all deterministic gates then pass and return `APPROVE` without HITL. Changing any identity field still blocks enrichment and escalates.
 3. **Red — INJX or BLANK:** INJX contains instruction-like evidence text, which the scanner marks `BLOCKED` before `ESCALATE`; BLANK proves absent 12b-1 evidence remains missing after two attempts and downstream Compliance never runs.
 
 The winning visual is not a stream of model prose. It is the state graph, structured checks,

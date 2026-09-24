@@ -30,7 +30,11 @@ def test_data_scenario_resets_identity_and_repairs_missing_sharpe():
     assert state["retries"] == 1
     assert state["fund"]["sharpe_ratio"] == 1.01
     assert state["conflicts"] == []
-    assert state["recommendation"] == "APPROVE_WITH_CONDITIONS"
+    assert state["recommendation"] == "APPROVE"
+    assert state["risk_score"] == 0
+    assert state["confidence"] == 0.94
+    assert state["needs_human"] is False
+    assert state["status"] == "COMPLETED"
     assert state["completed_agents"] == [
         "analyst",
         "compliance",

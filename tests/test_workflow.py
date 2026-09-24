@@ -32,7 +32,18 @@ def test_missing_metric_is_repaired_once(tmp_path, funds):
     assert state["fund"]["sharpe_ratio"] == 1.01
     assert state["missing_fields"] == []
     assert state["conflicts"] == []
-    assert state["recommendation"] == "APPROVE_WITH_CONDITIONS"
+    assert state["recommendation"] == "APPROVE"
+    assert state["risk_score"] == 0
+    assert state["confidence"] == 0.94
+    assert state["needs_human"] is False
+    assert state["status"] == "COMPLETED"
+    assert state["agent_results"]["finance"]["outcome"] == "PASS"
+    benchmark_check = next(
+        check
+        for check in state["agent_results"]["finance"]["checks"]
+        if check["rule_id"] == "FIN-BENCHMARK-002"
+    )
+    assert benchmark_check["outcome"] == "PASS"
     assert state["completed_agents"] == [
         "analyst",
         "compliance",
