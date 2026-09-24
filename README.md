@@ -106,9 +106,11 @@ To enable Bedrock explanations:
 
 ```bash
 export AWS_REGION=us-east-1
-export BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0
+export BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-5-20271001:0
 .venv/bin/streamlit run app.py
 ```
+
+> Note: Verify the exact Sonnet 5 model ID against the AWS Bedrock console in your region before deploying.
 
 The process reads environment variables directly; it does not automatically load a `.env` file.
 
@@ -181,6 +183,29 @@ scripts/generate_pitch_deck.py PowerPoint generator
 - [Executed validation results and honest limitations](docs/VALIDATION_REPORT.md)
 - [Exact three-minute pitch and judge Q&A](docs/PITCH_SCRIPT.md)
 - [`Fiducia_Pitch_Deck.pptx`](Fiducia_Pitch_Deck.pptx) and [`Fiducia_Pitch_Deck.pdf`](Fiducia_Pitch_Deck.pdf)
+
+## Orchestration Monitor
+
+The fifth tab in the Streamlit UI surfaces a live view of agent execution after each run:
+
+- **Agent execution graph** — Graphviz DOT diagram showing each node colored by status (pending/running/done/failed/awaiting human). Special shapes for `data_repair` (diamond) and `human_checkpoint` (octagon). Edge labels show traversal counts.
+- **KPI row** — Agents invoked, tool calls, Bedrock calls, tokens in/out, total latency, retries, human gates.
+- **Per-agent table** — Invocations, tool calls, LLM calls, token usage, latency and outcome per agent.
+- **Span Gantt chart** — Plotly timeline of all spans colored by kind (agent=teal, tool=gold, llm=purple, handoff=green).
+- **Handoff message log** — Each inter-agent handoff with from/to, type, reason and SHA-256 payload digest.
+- **Mermaid sequence diagram** — Sequence of handoffs in Mermaid format (rendered as source; copy into a Mermaid renderer).
+- **Bedrock call inspector** — Per-LLM-call view: model ID, request ID, latency, token counts, tools chosen, outcome validation flag.
+- **Batch scenario runner** — Run all 7 demo scenarios offline in one click and compare results in a table.
+
+## Real Bedrock tool-use loop
+
+When `model_mode=bedrock` is selected, `BedrockNarrativeEngine` runs a full Converse tool-use loop:
+
+1. Sends deterministic facts as the user message with instructions to call tools in order.
+2. Responds to each `tool_use` stop with the pre-computed deterministic value for that tool.
+3. Parses the model's final `end_turn` JSON `{"outcome", "rationale", "evidence_refs"}`.
+4. Validates that the model's outcome matches the deterministic outcome — if it disagrees, the deterministic outcome is kept and `model_outcome_rejected` is flagged in metadata.
+5. Records skipped tools, token counts, request IDs and latency for the Orchestration Monitor.
 
 ## Responsible claims
 
