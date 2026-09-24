@@ -1,0 +1,4 @@
+-r requirements.txt
+bedrock-agentcore==1.23.1
+# Optional alternative specialist runtime; LangGraph remains the demo orchestrator.
+strands-agents>=1.0,<2
