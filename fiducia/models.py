@@ -39,6 +39,10 @@ class WorkflowState(TypedDict, total=False):
     final_summary: str
     audit_path: str
     model_mode: str
+    spans: list[dict[str, Any]]       # serialized Span dicts
+    handoffs: list[dict[str, Any]]    # handoff envelopes
+    run_metrics: dict[str, Any]       # from Tracer.metrics()
+    tracer: Any                       # Tracer instance (not serialized to audit)
 
 
 AGENT_ORDER = [

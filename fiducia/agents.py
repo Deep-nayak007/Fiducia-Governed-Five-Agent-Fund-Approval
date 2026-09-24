@@ -87,13 +87,18 @@ class BaseAgent:
         return state
 
     def _narrative(
-        self, state: WorkflowState, facts: dict[str, Any], fallback: str
+        self,
+        state: WorkflowState,
+        facts: dict[str, Any],
+        fallback: str,
+        deterministic_outcome: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         return BedrockNarrativeEngine(state.get("model_mode", "offline")).explain(
             system_prompt=AGENT_PROMPTS[self.key],
             agent_name=AGENT_LABELS[self.key],
             facts=facts,
             fallback=fallback,
+            deterministic_outcome=deterministic_outcome,
         )
 
     def _audit(self, state: WorkflowState, event_type: str, payload: dict[str, Any]) -> None:
@@ -237,7 +242,7 @@ class AnalystAgent(BaseAgent):
             f"Intake {outcome.lower()}: {len(missing)} required field(s) missing, "
             f"{len(range_errors)} range error(s), and data-quality score {quality_score}/100."
         )
-        rationale, model = self._narrative(state, facts, fallback)
+        rationale, model = self._narrative(state, facts, fallback, deterministic_outcome=outcome)
         result = {
             "outcome": outcome,
             "confidence": round(confidence, 3),
@@ -342,7 +347,7 @@ class ComplianceAgent(BaseAgent):
         confidence = 0.96 if not state.get("conflicts") else 0.80
         facts = {"outcome": outcome, "checks": checks, "hard_stop_count": len(hard_stops)}
         fallback = f"Compliance controls produced {len(checks) - len(failures)} satisfied/configured-reference checks and {len(failures)} failure(s) under policy {state['policy_version']}; no legal conclusion was made."
-        rationale, model = self._narrative(state, facts, fallback)
+        rationale, model = self._narrative(state, facts, fallback, deterministic_outcome=outcome)
         return self._finish(state, {
             "outcome": outcome,
             "confidence": confidence,
@@ -415,7 +420,7 @@ class GovernanceAgent(BaseAgent):
         confidence = 0.94 if not state.get("conflicts") else 0.79
         facts = {"outcome": outcome, "checks": checks, "plan_id": plan.get("plan_id", "DEMO-PLAN")}
         fallback = f"Plan-fit review passed {len(checks) - len(failures)} of {len(checks)} configured criteria; {len(failures)} exception(s) require sponsor attention."
-        rationale, model = self._narrative(state, facts, fallback)
+        rationale, model = self._narrative(state, facts, fallback, deterministic_outcome=outcome)
         return self._finish(state, {"outcome": outcome, "confidence": confidence, "checks": checks, "rationale": rationale, "model": model, "tools": TOOL_SETS[self.key], "scope": "Plan-level fit only; not participant-level advice."})
 
 
@@ -469,7 +474,7 @@ class FinanceAgent(BaseAgent):
         confidence = 0.96 if breakpoint_status in {"VERIFIED", "NOT_APPLICABLE_NO_LOAD"} else 0.82
         facts = {"outcome": outcome, "checks": checks, "projection": projection, "boundary_flag": boundary_flag, "breakpoint_analysis": breakpoint_analysis}
         fallback = f"Expense ratio is {expense:.2f}% versus a {cap:.2f}% category cap and {benchmark:.2f}% benchmark ({benchmark_delta_bps:+.0f} bps); illustrative 20-year drag versus benchmark is ${projection['estimated_fee_drag_vs_benchmark']:,.0f}."
-        rationale, model = self._narrative(state, facts, fallback)
+        rationale, model = self._narrative(state, facts, fallback, deterministic_outcome=outcome)
         return self._finish(state, {"outcome": outcome, "confidence": confidence, "checks": checks, "projection": projection, "cap_delta_bps": cap_delta_bps, "benchmark_delta_bps": benchmark_delta_bps, "fee_boundary_flag": boundary_flag, "breakpoint_status": breakpoint_status, "breakpoint_analysis": breakpoint_analysis, "rationale": rationale, "model": model, "tools": TOOL_SETS[self.key], "disclaimer": "Illustration assumes a constant gross return and is not a forecast."})
 
 
@@ -546,7 +551,7 @@ class DecisionOwnerAgent(BaseAgent):
         self._record_tool(state, "HITL_router", {"recommendation": recommendation, "confidence": confidence, "risk_score": risk_score}, f"needs_human={needs_human}")
         facts = {"recommendation": recommendation, "risk_score": risk_score, "confidence": confidence, "human_reasons": human_reasons, "decisive_evidence": decisive}
         fallback = f"Recommendation: {recommendation}. Deterministic risk is {risk_score}/100 with {confidence:.0%} minimum specialist confidence. " + (f"Human review is required: {'; '.join(human_reasons)}." if needs_human else "All auto-approval gates passed.")
-        rationale, model = self._narrative(state, facts, fallback)
+        rationale, model = self._narrative(state, facts, fallback, deterministic_outcome=recommendation)
 
         state["risk_score"] = risk_score
         state["confidence"] = confidence

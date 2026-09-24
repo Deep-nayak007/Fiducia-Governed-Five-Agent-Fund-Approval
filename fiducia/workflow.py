@@ -14,6 +14,7 @@ from .agents import AGENTS
 from .audit import AuditLogger
 from .models import WorkflowState
 from .policy import load_policy
+from .telemetry import Tracer
 from .tools import lookup_fund_reference, normalize_record, tool_trace
 from .validation import validate_fund_values, validate_plan_values
 
@@ -89,6 +90,10 @@ def create_initial_state(
         "final_summary": "",
         "audit_path": resolved_audit,
         "model_mode": model_mode,
+        "spans": [],
+        "handoffs": [],
+        "run_metrics": {},
+        "tracer": Tracer(resolved_trace),
     }
     AuditLogger(resolved_audit).append(
         trace_id=resolved_trace,
@@ -111,7 +116,24 @@ def create_initial_state(
 
 def _agent_node(name: str):
     def invoke(state: WorkflowState) -> WorkflowState:
-        return AGENTS[name].run(state)
+        tracer: Tracer | None = state.get("tracer")  # type: ignore[assignment]
+        span = tracer.start_span("agent", name) if tracer else None
+        try:
+            result_state = AGENTS[name].run(state)
+            status = "ok"
+        except Exception:
+            result_state = state
+            status = "error"
+            raise
+        finally:
+            if tracer and span:
+                agent_result = result_state.get("agent_results", {}).get(name, {})
+                span.attributes["outcome"] = agent_result.get("outcome")
+                span.attributes["confidence"] = agent_result.get("confidence")
+                tracer.end_span(span, status)
+                result_state["spans"] = [s.to_dict() for s in tracer.spans]
+                result_state["run_metrics"] = tracer.metrics()
+        return result_state
 
     invoke.__name__ = f"{name}_node"
     return invoke
@@ -119,6 +141,15 @@ def _agent_node(name: str):
 
 def data_repair_node(incoming: WorkflowState) -> WorkflowState:
     state: WorkflowState = deepcopy(incoming)
+    tracer: Tracer | None = state.get("tracer")  # type: ignore[assignment]
+    retry_num = int(state.get("retries", 0)) + 1
+    missing_preview = ", ".join(state.get("missing_fields", [])[:3])
+    span = tracer.start_span(
+        "retry", "data_repair",
+        agent="orchestrator",
+        retry_num=retry_num,
+        reason=f"{missing_preview} missing, retry {retry_num}/{state.get('max_retries', 2)}",
+    ) if tracer else None
     missing = list(state.get("missing_fields", []))
     reference = lookup_fund_reference(str(state["fund"].get("ticker", "")))
     repaired: dict[str, Any] = {}
@@ -155,15 +186,41 @@ def data_repair_node(incoming: WorkflowState) -> WorkflowState:
     state.setdefault("tool_calls", []).append(tool_trace("orchestrator", "reference_catalog_lookup", {"ticker": state["fund"].get("ticker"), "fields": missing}, f"repaired={sorted(repaired)}", "SUCCESS" if repaired else "NO_MATCH"))
     state.setdefault("events", []).append({"agent": "orchestrator", "kind": "SELF_CORRECTION", "message": f"Enrichment retry {state['retries']}/{state['max_retries']}", "details": attempt})
     AuditLogger(state["audit_path"]).append(trace_id=state["trace_id"], event_type="SELF_CORRECTION", actor="orchestrator", payload=attempt)
+    if tracer and span:
+        tracer.end_span(span, "ok")
+        if tracer.handoffs or tracer.spans:
+            state["spans"] = [s.to_dict() for s in tracer.spans]
+            state["handoffs"] = list(tracer.handoffs)
+            state["run_metrics"] = tracer.metrics()
+        # Record handoff back to analyst
+        tracer.record_handoff(
+            "data_repair", "analyst", "RETRY_ANALYST",
+            f"retry {state['retries']}/{state['max_retries']} after repair of {sorted(repaired) or 'nothing'}",
+            {"repaired": sorted(repaired), "missing_remaining": state.get("missing_fields", [])},
+            f"data_repair complete, retry {state['retries']}/{state['max_retries']}",
+        )
+        state["handoffs"] = list(tracer.handoffs)
     return state
 
 
 def human_review_node(incoming: WorkflowState) -> WorkflowState:
     state: WorkflowState = deepcopy(incoming)
+    tracer: Tracer | None = state.get("tracer")  # type: ignore[assignment]
+    span = tracer.start_span(
+        "hitl", "human_checkpoint",
+        recommendation=state.get("recommendation"),
+        risk_score=state.get("risk_score"),
+        reasons=state.get("human_reasons", []),
+    ) if tracer else None
     state["active_agent"] = "human_review"
     state["status"] = "AWAITING_HUMAN_REVIEW"
     state.setdefault("events", []).append({"agent": "human_review", "kind": "WORKFLOW_PAUSED", "message": "Workflow paused at governed human checkpoint", "details": {"reasons": state.get("human_reasons", [])}})
     AuditLogger(state["audit_path"]).append(trace_id=state["trace_id"], event_type="HITL_REQUIRED", actor="orchestrator", payload={"recommendation": state.get("recommendation"), "risk_score": state.get("risk_score"), "reasons": state.get("human_reasons", [])})
+    if tracer and span:
+        tracer.end_span(span, "ok")
+        state["spans"] = [s.to_dict() for s in tracer.spans]
+        state["handoffs"] = list(tracer.handoffs)
+        state["run_metrics"] = tracer.metrics()
     return state
 
 
@@ -234,6 +291,11 @@ def run_workflow(
         final: WorkflowState = build_graph().invoke(state)
     except ImportError:
         final = _fallback_run(state)
+    tracer: Tracer | None = final.get("tracer")  # type: ignore[assignment]
+    if tracer:
+        final["run_metrics"] = tracer.metrics()
+        final["spans"] = [s.to_dict() for s in tracer.spans]
+        final["handoffs"] = list(tracer.handoffs)
     AuditLogger(final["audit_path"]).append(trace_id=final["trace_id"], event_type="WORKFLOW_CHECKPOINT", actor="orchestrator", payload={"status": final["status"], "recommendation": final["recommendation"], "risk_score": final["risk_score"], "confidence": final["confidence"], "needs_human": final["needs_human"], "human_reasons": final["human_reasons"], "final_summary": final["final_summary"]})
     return final
 
