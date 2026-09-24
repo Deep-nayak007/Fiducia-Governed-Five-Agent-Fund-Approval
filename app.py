@@ -11,11 +11,17 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+try:
+    import plotly.express as px
+    _PLOTLY_AVAILABLE = True
+except ImportError:
+    _PLOTLY_AVAILABLE = False
+
 from fiducia.audit import AuditLogger
 from fiducia.models import AGENT_LABELS, AGENT_ORDER
 from fiducia.policy import expense_benchmark, expense_cap, load_policy
 from fiducia.tools import MOCK_PATH, load_funds
-from fiducia.workflow import apply_human_decision, stream_workflow
+from fiducia.workflow import apply_human_decision, run_workflow, stream_workflow
 
 
 ROOT = Path(__file__).resolve().parent
@@ -288,8 +294,74 @@ st.markdown(
 agent_graph_placeholder = st.empty()
 agent_graph_placeholder.markdown(render_agent_graph(state), unsafe_allow_html=True)
 
-cockpit_tab, agents_tab, audit_tab, architecture_tab = st.tabs(
-    ["Decision cockpit", "Agent workspace", "Audit & controls", "Architecture & value"]
+def build_dot(state: dict[str, Any]) -> str:
+    metrics = state.get("run_metrics", {})
+    edges = metrics.get("edges_traversed", {})
+    completed = set(state.get("completed_agents", []))
+    active = state.get("active_agent", "")
+    results = state.get("agent_results", {})
+
+    agent_nodes = {
+        "analyst": "Analyst\\nReviewer",
+        "compliance": "Compliance\\n& Regulatory",
+        "governance": "Governance\\n& Suitability",
+        "finance": "Finance\\n& Cost",
+        "decision_owner": "Decision\\nOwner",
+    }
+
+    lines = [
+        'digraph G {',
+        '  rankdir=LR;',
+        '  node [style=filled fontname="Arial" fontsize=10];',
+        '  edge [fontsize=9];',
+    ]
+
+    for key, label in agent_nodes.items():
+        outcome = results.get(key, {}).get("outcome", "")
+        if key == active:
+            color = "#19c6b3"
+        elif key in completed:
+            color = "#ff6b6b" if outcome in {"FAIL", "REJECT"} else "#57d49b"
+        else:
+            color = "#1a3548"
+        lines.append(f'  {key} [label="{label}" fillcolor="{color}" fontcolor="white" shape=box];')
+
+    lines.append('  data_repair [label="Data\\nRepair" fillcolor="#f4b942" fontcolor="black" shape=diamond];')
+    lines.append('  human_checkpoint [label="Human\\nCheckpoint" fillcolor="#f4b942" fontcolor="black" shape=octagon];')
+
+    retries = state.get("retries", 0)
+    edge_defs = [
+        ("analyst", "compliance", ""),
+        ("analyst", "data_repair", f"\xd7{retries}" if retries else ""),
+        ("data_repair", "analyst", ""),
+        ("compliance", "governance", ""),
+        ("governance", "finance", ""),
+        ("finance", "decision_owner", ""),
+        ("decision_owner", "human_checkpoint", ""),
+    ]
+    for src, dst, label in edge_defs:
+        key = f"{src}\u2192{dst}"
+        count = edges.get(key, 0)
+        lbl = label or (f"\xd7{count}" if count > 1 else "")
+        lines.append(f'  {src} -> {dst} [label="{lbl}"];')
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _build_mermaid(state: dict[str, Any]) -> str:
+    handoffs = state.get("handoffs", [])
+    lines = ["sequenceDiagram"]
+    for h in handoffs:
+        frm = h.get("from", "?")
+        to = h.get("to", "?")
+        reason = h.get("reason", h.get("payload_summary", ""))
+        lines.append(f"    {frm}->>{to}: {reason}")
+    return "\n".join(lines)
+
+
+cockpit_tab, agents_tab, audit_tab, architecture_tab, monitor_tab = st.tabs(
+    ["Decision cockpit", "Agent workspace", "Audit & controls", "Architecture & value", "Orchestration Monitor"]
 )
 
 with cockpit_tab:
@@ -616,6 +688,153 @@ with architecture_tab:
     st.markdown(
         "[AWS AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html) · [SEC fee bulletin](https://www.sec.gov/investor/alerts/ib_mutualfundfees.pdf) · [FINRA Rule 2341](https://www.finra.org/rules-guidance/rulebooks/finra-rules/2341)"
     )
+
+with monitor_tab:
+    st.markdown("### Orchestration Monitor")
+    if not state:
+        st.info("Run a case to populate the orchestration monitor.")
+    else:
+        # 3a. Live agent graph
+        st.markdown("#### Agent execution graph")
+        try:
+            st.graphviz_chart(build_dot(state))
+        except Exception as _gv_err:
+            st.caption(f"Graphviz chart unavailable: {_gv_err}")
+
+        # 3b. KPI row
+        metrics_data = state.get("run_metrics", {})
+        kpi_cols = st.columns(8)
+        kpi_cols[0].metric("Agents Invoked", metrics_data.get("total_agents_invoked", len(state.get("completed_agents", []))))
+        kpi_cols[1].metric("Tool Calls", metrics_data.get("total_tool_calls", len(state.get("tool_calls", []))))
+        kpi_cols[2].metric("Bedrock Calls", metrics_data.get("total_bedrock_calls", 0))
+        kpi_cols[3].metric("Tokens In", metrics_data.get("total_input_tokens", 0))
+        kpi_cols[4].metric("Tokens Out", metrics_data.get("total_output_tokens", 0))
+        kpi_cols[5].metric("Total Latency (ms)", f"{metrics_data.get('total_latency_ms', 0):.0f}")
+        kpi_cols[6].metric("Retries", metrics_data.get("total_retries", state.get("retries", 0)))
+        kpi_cols[7].metric("Human Gates", metrics_data.get("human_gates_triggered", 1 if state.get("needs_human") else 0))
+
+        # 3c. Per-agent table
+        per_agent = metrics_data.get("per_agent", {})
+        if per_agent:
+            st.markdown("#### Per-agent summary")
+            agent_rows = []
+            for name, data in per_agent.items():
+                agent_rows.append({
+                    "Agent": name,
+                    "Invocations": data.get("invocations", 0),
+                    "Tool Calls": data.get("tool_calls", 0),
+                    "LLM Calls": data.get("llm_calls", 0),
+                    "Tokens In": data.get("input_tokens", 0),
+                    "Tokens Out": data.get("output_tokens", 0),
+                    "Latency (ms)": round(data.get("latency_ms", 0), 1),
+                    "Outcome": data.get("outcome") or "",
+                    "Confidence": f"{float(data.get('confidence') or 0):.0%}",
+                })
+            st.dataframe(pd.DataFrame(agent_rows), hide_index=True)
+
+        # 3d. Plotly Gantt timeline
+        spans = state.get("spans", [])
+        if spans and _PLOTLY_AVAILABLE:
+            st.markdown("#### Span timeline")
+            kind_colors = {
+                "agent": "#19c6b3",
+                "tool": "#f4b942",
+                "llm": "#a970f4",
+                "handoff": "#57d49b",
+                "retry": "#ff9966",
+                "hitl": "#ff6b6b",
+            }
+            gantt_rows = []
+            for s in spans:
+                if s.get("start_ts") and s.get("end_ts"):
+                    import datetime
+                    gantt_rows.append({
+                        "Task": s.get("name", s.get("kind", "?")),
+                        "Start": datetime.datetime.utcfromtimestamp(s["start_ts"]).isoformat(),
+                        "Finish": datetime.datetime.utcfromtimestamp(s["end_ts"]).isoformat(),
+                        "Kind": s.get("kind", "?"),
+                    })
+            if gantt_rows:
+                fig = px.timeline(
+                    pd.DataFrame(gantt_rows),
+                    x_start="Start", x_end="Finish", y="Task",
+                    color="Kind",
+                    color_discrete_map=kind_colors,
+                    title="Span Gantt",
+                )
+                fig.update_layout(height=300, paper_bgcolor="#071321", plot_bgcolor="#0d2033",
+                                  font_color="#d3dce4")
+                st.plotly_chart(fig, use_container_width=True)
+
+        # 3e. Handoff message log
+        handoffs = state.get("handoffs", [])
+        if handoffs:
+            st.markdown("#### Handoff message log")
+            for h in handoffs:
+                frm = h.get("from", "?")
+                to = h.get("to", "?")
+                msg_type = h.get("message_type", "?")
+                reason = h.get("reason", "")
+                with st.expander(f"{frm} → {to} · {msg_type} · {reason[:60]}"):
+                    st.json(h)
+
+        # Mermaid sequence diagram
+        mermaid_str = _build_mermaid(state)
+        if len(mermaid_str.splitlines()) > 1:
+            st.markdown("#### Sequence diagram (Mermaid source)")
+            st.code(mermaid_str, language="text")
+
+        # 3f. Bedrock call inspector
+        llm_spans = [s for s in spans if s.get("kind") == "llm"]
+        if llm_spans:
+            st.markdown("#### Bedrock call inspector")
+            for s in llm_spans:
+                attrs = s.get("attributes", {})
+                with st.expander(f"{s.get('name', '?')} · {attrs.get('model_id', 'n/a')} · {s.get('duration_ms', 0):.0f}ms"):
+                    st.json({
+                        "model_id": attrs.get("model_id"),
+                        "request_id": attrs.get("request_id"),
+                        "latency_ms": s.get("duration_ms"),
+                        "input_tokens": attrs.get("input_tokens", 0),
+                        "output_tokens": attrs.get("output_tokens", 0),
+                        "tools_chosen": attrs.get("tools_called", []),
+                        "model_outcome_rejected": attrs.get("model_outcome_rejected", False),
+                        "fallback": attrs.get("fallback", False),
+                    })
+
+        # 3g. Run all scenarios batch view
+        st.markdown("#### Batch scenario runner")
+        DEMO_TICKERS = ["SUNX", "DATA", "ALPHX", "SPECX", "CONFX", "INJX", "BLANK"]
+        if st.button("Run all 7 demo scenarios (offline)"):
+            batch_results = []
+            with st.spinner("Running all scenarios…"):
+                for ticker in DEMO_TICKERS:
+                    demo_fund = fund_by_ticker.get(ticker)
+                    if not demo_fund:
+                        continue
+                    try:
+                        s = run_workflow(
+                            demo_fund,
+                            plan_profile={"plan_id": "ASU-DEMO-401A", "max_risk_score": 7},
+                            model_mode="offline",
+                        )
+                        m = s.get("run_metrics", {})
+                        batch_results.append({
+                            "Ticker": ticker,
+                            "Route": s.get("status", "?"),
+                            "Agents": len(s.get("completed_agents", [])),
+                            "Tool Calls": m.get("total_tool_calls", len(s.get("tool_calls", []))),
+                            "LLM Calls": m.get("total_bedrock_calls", 0),
+                            "Latency (ms)": f"{m.get('total_latency_ms', 0):.0f}",
+                            "Retries": s.get("retries", 0),
+                            "Human Gates": 1 if s.get("needs_human") else 0,
+                            "Recommendation": s.get("recommendation", "?"),
+                            "Confidence": f"{float(s.get('confidence', 0)):.0%}",
+                        })
+                    except Exception as batch_err:
+                        batch_results.append({"Ticker": ticker, "Route": f"ERROR: {batch_err}"})
+            if batch_results:
+                st.dataframe(pd.DataFrame(batch_results), hide_index=True)
 
 st.markdown(
     '<div class="footer-note">Fiducia is a synthetic hackathon prototype for decision support. It is not legal, fiduciary, tax, or investment advice—and it does not represent TIAA internal policy.</div>',
