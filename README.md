@@ -182,6 +182,15 @@ scripts/generate_pitch_deck.py PowerPoint generator
 - [Exact three-minute pitch and judge Q&A](docs/PITCH_SCRIPT.md)
 - [`Fiducia_Pitch_Deck.pptx`](Fiducia_Pitch_Deck.pptx) and [`Fiducia_Pitch_Deck.pdf`](Fiducia_Pitch_Deck.pdf)
 
+💡 The Use Case
+
+A mutual fund or ETF is nominated for a TIAA retirement portfolio. Instead of a human spending weeks doing due diligence, our system triggers an automated pipeline. The AI handles data extraction, compliance/regulatory checks, fee/expense ratio analysis, and plan-fit suitability. The system routes tasks seamlessly, but crucially, it generates a transparent metadata trail for every decision, allowing humans to step in only when complex fiduciary anomalies are flagged.
+
+🎯 Target User
+
+Enterprise-level Portfolio Managers, Fiduciary Officers, and Compliance Teams at TIAA who manage retirement savings for educators and require absolute transparency, minimized human intervention, and zero tolerance for AI hallucinations in fund approval.
+
 ## Responsible claims
 
 Fiducia does **not** claim that the SEC sets one universal expense-ratio cap. Category caps in the demo are internal illustrative controls. The FINRA 2341 references are componentized and explicitly marked as requiring counsel/applicability validation. SEC materials explain how fees affect investors; they do not turn a configured sponsor threshold into law. See the [SEC fee bulletin](https://www.sec.gov/investor/alerts/ib_mutualfundfees.pdf) and [FINRA Rule 2341](https://www.finra.org/rules-guidance/rulebooks/finra-rules/2341).
+
