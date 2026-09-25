@@ -718,66 +718,132 @@ with architecture_tab:
     )
 
 def _build_visnetwork_html(state: dict) -> str:
-    """Return a self-contained HTML string with an animated vis-network agent graph."""
+    """Return a modern animated process diagram with card-style nodes, two view modes, and TFGS badge."""
     completed = state.get("completed_agents", [])
     needs_human = state.get("needs_human", False)
     handoffs = state.get("handoffs", [])
     spans = state.get("spans", [])
-    per_agent_metrics = state.get("run_metrics", {}).get("per_agent", {})
+    per_agent = state.get("run_metrics", {}).get("per_agent", {})
     retries = state.get("retries", 0)
     recommendation = state.get("recommendation", "")
+    tfgs_score = state.get("tfgs_score", 0)
+    self_correct_target = state.get("self_correct_target")
 
-    # Tool call counts per agent
+    # Per-agent metrics
     tool_counts: dict[str, int] = {}
+    bedrock_counts: dict[str, int] = {}
+    latencies: dict[str, float] = {}
     for sp in spans:
-        if sp.get("kind") == "tool":
-            ag = sp.get("attributes", {}).get("agent", sp.get("from_agent", ""))
-            if ag:
-                tool_counts[ag] = tool_counts.get(ag, 0) + 1
+        ag = sp.get("attributes", {}).get("agent", "") or sp.get("from_agent", "")
+        if sp.get("kind") == "tool" and ag:
+            tool_counts[ag] = tool_counts.get(ag, 0) + 1
+        if sp.get("kind") == "llm" and ag:
+            bedrock_counts[ag] = bedrock_counts.get(ag, 0) + 1
+    for ag, d in per_agent.items():
+        latencies[ag] = round(d.get("latency_ms", 0), 1)
 
-    # Build node list: router → agents → human_gate
-    node_defs = [
-        {"id": "router", "label": "Strands\nRouter", "group": "router", "title": "Natural-language entry point"},
-        {"id": "analyst", "label": f"Analyst\n[{tool_counts.get('analyst', 0)} tools]", "group": "agent",
-         "title": f"Analyst agent · tools={tool_counts.get('analyst',0)}"},
-        {"id": "compliance", "label": f"Compliance\n[{tool_counts.get('compliance', 0)} tools]", "group": "agent",
-         "title": f"Compliance agent · tools={tool_counts.get('compliance',0)}"},
-        {"id": "governance", "label": f"Governance\n[{tool_counts.get('governance', 0)} tools]", "group": "agent",
-         "title": f"Governance agent · tools={tool_counts.get('governance',0)}"},
-        {"id": "finance", "label": f"Finance\n[{tool_counts.get('finance', 0)} tools]", "group": "agent",
-         "title": f"Finance agent · tools={tool_counts.get('finance',0)}"},
-        {"id": "decision_owner", "label": f"Decision\nOwner\n[{tool_counts.get('decision_owner', 0)} tools]",
-         "group": "agent", "title": f"Decision owner · tools={tool_counts.get('decision_owner',0)}"},
+    def node_status(nid: str) -> str:
+        if nid == "router":
+            return "Processing complete"
+        if nid == "human_gate":
+            return "Awaiting human" if needs_human else "Not reached"
+        if nid == "data_repair":
+            return f"Self-corrected ×{retries}"
+        if nid == "governor_self_correct":
+            return f"Self-corrected ×{retries}"
+        if nid in completed:
+            return "Processing complete"
+        return "Waiting"
+
+    _AGENT_SUBTITLES = {
+        "router": "Strands NL Router",
+        "analyst": "Data Quality",
+        "compliance": "Regulatory",
+        "governance": "Plan Suitability",
+        "finance": "Fee & Cost",
+        "decision_owner": "TFGS Gate",
+        "data_repair": "Catalog Repair",
+        "human_gate": "HITL Checkpoint",
+    }
+    _AGENT_COLORS = {
+        "router":        "#19c6b3",
+        "analyst":       "#4a9eff",
+        "compliance":    "#a970f4",
+        "governance":    "#57d49b",
+        "finance":       "#f4b942",
+        "decision_owner":"#ff9966",
+        "data_repair":   "#ff9966",
+        "human_gate":    "#f4b942",
+    }
+    _AGENT_ICONS = {
+        "router": "⬡", "analyst": "🔍", "compliance": "⚖", "governance": "🏛",
+        "finance": "💰", "decision_owner": "🛡", "data_repair": "🔧", "human_gate": "👤",
+    }
+
+    # Build nodes
+    all_node_ids = ["router", "analyst", "compliance", "governance", "finance", "decision_owner"]
+    if retries > 0:
+        all_node_ids.append("data_repair")
+    if needs_human:
+        all_node_ids.append("human_gate")
+
+    def badge(nid: str) -> str:
+        parts = []
+        tc = tool_counts.get(nid, 0)
+        bc = bedrock_counts.get(nid, 0)
+        lat = latencies.get(nid, 0)
+        if tc:
+            parts.append(f"{tc} tools")
+        if bc:
+            parts.append(f"{bc} LLM")
+        if lat:
+            parts.append(f"{lat:.0f}ms")
+        if nid == "decision_owner" and tfgs_score:
+            parts.append(f"TFGS {tfgs_score}")
+        if nid == "data_repair" and retries:
+            parts.append(f"×{retries}")
+        return " · ".join(parts)
+
+    node_defs = []
+    for nid in all_node_ids:
+        status = node_status(nid)
+        b = badge(nid)
+        icon = _AGENT_ICONS.get(nid, "◈")
+        subtitle = _AGENT_SUBTITLES.get(nid, nid)
+        lbl = f"{icon} {nid.replace('_',' ').title()}\n{subtitle}\n{status}" + (f"\n{b}" if b else "")
+        node_defs.append({
+            "id": nid, "label": lbl, "group": nid,
+            "title": f"<b>{nid}</b><br>Status: {status}<br>{b}",
+        })
+
+    # Edges
+    edge_defs = [
+        {"id": "e_router_analyst", "from": "router", "to": "analyst", "label": "invoke", "dashes": [8, 4]},
+        {"id": "e_a_c", "from": "analyst", "to": "compliance", "label": ""},
+        {"id": "e_c_g", "from": "compliance", "to": "governance", "label": ""},
+        {"id": "e_g_f", "from": "governance", "to": "finance", "label": ""},
+        {"id": "e_f_d", "from": "finance", "to": "decision_owner", "label": ""},
     ]
-    if needs_human:
-        node_defs.append({"id": "human_gate", "label": f"Human\nReview\n({recommendation})",
-                           "group": "human", "title": "Human-in-the-loop gate"})
     if retries > 0:
-        node_defs.append({"id": "data_repair", "label": f"Data\nRepair\n×{retries}",
-                           "group": "retry", "title": f"{retries} repair attempt(s)"})
-
-    # Edge list
-    _PIPELINE = ["analyst", "compliance", "governance", "finance", "decision_owner"]
-    edge_defs = [{"from": "router", "to": "analyst", "label": "invoke", "dashes": True}]
-    for i in range(len(_PIPELINE) - 1):
-        edge_defs.append({"from": _PIPELINE[i], "to": _PIPELINE[i + 1], "label": "→"})
-    if retries > 0:
-        edge_defs.append({"from": "analyst", "to": "data_repair", "label": "repair", "color": "#ff9966"})
-        edge_defs.append({"from": "data_repair", "to": "analyst", "label": "retry", "color": "#ff9966", "dashes": True})
+        edge_defs.append({"id": "e_a_dr", "from": "analyst", "to": "data_repair", "label": "missing", "color": "#ff9966", "dashes": [4, 4]})
+        edge_defs.append({"id": "e_dr_a", "from": "data_repair", "to": "analyst", "label": "retry", "color": "#ff9966", "dashes": [4, 4]})
+    # SELF_CORRECT backward edge (always shown as topology)
+    if self_correct_target:
+        edge_defs.append({"id": "e_sc", "from": "decision_owner", "to": self_correct_target or "analyst",
+                          "label": "SELF_CORRECT", "color": "#a970f4", "dashes": [6, 3], "width": 2})
+    else:
+        # Show the possible backward edge in grey as topology hint
+        edge_defs.append({"id": "e_sc", "from": "decision_owner", "to": "analyst",
+                          "label": "SELF_CORRECT↩", "color": "#2a3a4a", "dashes": [4, 6]})
     if needs_human:
-        edge_defs.append({"from": "decision_owner", "to": "human_gate", "label": "escalate",
-                           "color": "#f4b942", "width": 3})
-    for h in handoffs[:6]:
-        frm, to = h.get("from", ""), h.get("to", "")
-        if frm and to and frm != to and frm in {n["id"] for n in node_defs} and to in {n["id"] for n in node_defs}:
-            edge_defs.append({"from": frm, "to": to, "label": h.get("message_type", ""), "color": "#19c6b3",
-                               "dashes": [5, 5]})
+        edge_defs.append({"id": "e_hitl", "from": "decision_owner", "to": "human_gate",
+                          "label": "escalate", "color": "#f4b942", "width": 3})
 
-    # Animation sequence: completed agents in order
     anim_sequence = json.dumps(["router"] + completed + (["human_gate"] if needs_human else []))
 
     nodes_js = json.dumps(node_defs)
     edges_js = json.dumps(edge_defs)
+    colors_js = json.dumps(_AGENT_COLORS)
 
     return f"""<!DOCTYPE html>
 <html>
@@ -787,91 +853,134 @@ def _build_visnetwork_html(state: dict) -> str:
   integrity="sha512-M6RAojasCzsf7tNiMQhA1bDE7hNPaCuDzBb+f2wKLXH53j/xWR/AiB73MsCLEzMNTwWLqtWbTJm2V3ACyCcA=="
   crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
-  body {{ margin:0; background:#071321; font-family:'DM Sans',sans-serif; }}
-  #net {{ width:100%; height:320px; border:1px solid #1e3c50; border-radius:8px; background:#0d2033; }}
-  #controls {{ display:flex; gap:8px; padding:6px 4px; align-items:center; }}
-  button {{ background:#19c6b3; color:#071321; border:none; padding:5px 14px; border-radius:6px;
-             font-weight:700; cursor:pointer; font-size:.82rem; }}
-  button:hover {{ background:#0fa898; }}
-  #status {{ color:#91a7b8; font-size:.78rem; }}
+* {{ box-sizing:border-box; margin:0; padding:0; }}
+body {{ background:#071321; font-family:'DM Sans',system-ui,sans-serif; color:#d3dce4; }}
+#toolbar {{ display:flex; gap:8px; padding:8px; align-items:center; flex-wrap:wrap; }}
+.btn {{ background:#19c6b3; color:#071321; border:none; padding:5px 13px; border-radius:7px;
+        font-weight:700; cursor:pointer; font-size:.78rem; transition:background .15s; }}
+.btn:hover {{ background:#0fa898; }}
+.btn.sec {{ background:#1b3448; color:#91a7b8; }}
+.btn.sec:hover {{ background:#254157; color:#d3dce4; }}
+.btn.active {{ outline:2px solid #19c6b3; }}
+#status {{ color:#91a7b8; font-size:.76rem; flex:1; text-align:right; }}
+#net {{ width:100%; height:380px; border:1px solid #1e3c50; border-radius:10px;
+        background:linear-gradient(160deg,#0d2033 0%,#071321 100%); }}
+#legend {{ display:flex; gap:10px; padding:4px 8px; flex-wrap:wrap; }}
+.dot {{ width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:4px; vertical-align:middle; }}
+.leg {{ color:#91a7b8; font-size:.72rem; display:flex; align-items:center; }}
 </style>
 </head>
 <body>
-<div id="controls">
-  <button onclick="replayAnimation()">▶ Replay run</button>
+<div id="toolbar">
+  <button class="btn active" id="btnAgents" onclick="setView('agents')">Agents at Work</button>
+  <button class="btn sec" id="btnProcess" onclick="setView('process')">Process Diagram</button>
+  <button class="btn sec" onclick="replayAnimation()">▶ Replay</button>
+  <button class="btn sec" onclick="network.fit()">⊡ Fit</button>
+  <button class="btn sec" onclick="network.zoomIn(0.3)">＋</button>
+  <button class="btn sec" onclick="network.zoomOut(0.3)">－</button>
   <span id="status">Ready</span>
 </div>
 <div id="net"></div>
+<div id="legend">
+  <span class="leg"><span class="dot" style="background:#19c6b3"></span>Router</span>
+  <span class="leg"><span class="dot" style="background:#4a9eff"></span>Analyst</span>
+  <span class="leg"><span class="dot" style="background:#a970f4"></span>Compliance</span>
+  <span class="leg"><span class="dot" style="background:#57d49b"></span>Governance</span>
+  <span class="leg"><span class="dot" style="background:#f4b942"></span>Finance / Human Gate</span>
+  <span class="leg"><span class="dot" style="background:#ff9966"></span>Fiduciary Governor / Repair</span>
+  <span class="leg"><span class="dot" style="background:#2a3a4a;border:1px dashed #91a7b8"></span>SELF_CORRECT (topology)</span>
+</div>
 <script>
-var GROUP_COLORS = {{
-  router:  {{ background:"#254157", border:"#19c6b3", highlight:{{background:"#19c6b3",border:"#ffffff"}} }},
-  agent:   {{ background:"#0e2437", border:"#254157", highlight:{{background:"#19c6b3",border:"#ffffff"}} }},
-  human:   {{ background:"#3a2200", border:"#f4b942", highlight:{{background:"#f4b942",border:"#ffffff"}} }},
-  retry:   {{ background:"#2a1800", border:"#ff9966", highlight:{{background:"#ff9966",border:"#ffffff"}} }},
-}};
-var ACTIVE_COLOR = {{ background:"#19c6b3", border:"#ffffff", fontColor:"#071321" }};
-var DONE_COLOR   = {{ background:"#0f4035", border:"#19c6b3" }};
-
+var COLORS = {colors_js};
 var nodeData = {nodes_js};
 var edgeData = {edges_js};
-var animSeq  = {anim_sequence};
+var animSeq = {anim_sequence};
+var currentView = "agents";
 
-// Assign group colors
+// Assign styles
 nodeData.forEach(function(n) {{
-  var gc = GROUP_COLORS[n.group] || GROUP_COLORS.agent;
-  n.color = gc;
-  n.font  = {{ color:"#d3dce4", size:11, multi:true }};
-  n.shape = n.group === "human" ? "diamond" : (n.group === "router" ? "hexagon" : "box");
-  n.margin = 8;
+  var c = COLORS[n.id] || "#254157";
+  n.color = {{ background:"#0e2437", border:c, highlight:{{background:c,border:"#fff"}}, hover:{{background:c+"22",border:c}} }};
+  n.font = {{ color:"#d3dce4", size:10, multi:false, bold:{{ size:11 }} }};
+  n.shape = (n.id === "human_gate") ? "diamond" : (n.id === "router") ? "hexagon" : "box";
+  n.borderWidth = 2;
+  n.borderWidthSelected = 3;
+  n.margin = {{ top:8, right:10, bottom:8, left:10 }};
+  n.widthConstraint = {{ minimum:90, maximum:130 }};
 }});
-
 edgeData.forEach(function(e) {{
-  if (!e.color) e.color = {{ color:"#254157", highlight:"#19c6b3" }};
-  else e.color = {{ color: e.color, highlight:"#ffffff" }};
-  e.font = {{ color:"#91a7b8", size:9, align:"middle" }};
-  e.arrows = "to";
-  e.smooth = {{ type:"curvedCW", roundness:0.15 }};
+  if (!e.color) e.color = {{ color:"#254157", highlight:"#19c6b3", hover:"#19c6b3" }};
+  else e.color = {{ color:e.color, highlight:"#fff", hover:e.color }};
+  e.font = {{ color:"#91a7b8", size:9, strokeWidth:0 }};
+  e.arrows = {{ to:{{ enabled:true, scaleFactor:0.7 }} }};
+  e.smooth = {{ type:"curvedCW", roundness:0.18 }};
+  e.width = e.width || 1.5;
 }});
 
 var nodes = new vis.DataSet(nodeData);
 var edges = new vis.DataSet(edgeData);
 var container = document.getElementById("net");
-var network = new vis.Network(container, {{nodes:nodes, edges:edges}}, {{
-  layout: {{ hierarchical: {{ enabled:true, direction:"LR", sortMethod:"directed", levelSeparation:110, nodeSpacing:60 }} }},
+
+var OPTS_AGENTS = {{
+  layout: {{ hierarchical:{{ enabled:true, direction:"LR", sortMethod:"directed",
+    levelSeparation:140, nodeSpacing:80, treeSpacing:100 }} }},
   physics: {{ enabled:false }},
-  interaction: {{ tooltipDelay:200, zoomView:false }},
-}});
+  interaction: {{ tooltipDelay:150, hover:true }},
+}};
+var OPTS_PROCESS = {{
+  layout: {{ hierarchical:{{ enabled:true, direction:"UD", sortMethod:"directed",
+    levelSeparation:110, nodeSpacing:100 }} }},
+  physics: {{ enabled:false }},
+  interaction: {{ tooltipDelay:150, hover:true }},
+}};
+
+var network = new vis.Network(container, {{nodes:nodes, edges:edges}}, OPTS_AGENTS);
+
+function setView(v) {{
+  currentView = v;
+  document.getElementById("btnAgents").className = v==="agents"?"btn active":"btn sec";
+  document.getElementById("btnProcess").className = v==="process"?"btn active":"btn sec";
+  network.setOptions(v==="process" ? OPTS_PROCESS : OPTS_AGENTS);
+  network.fit();
+}}
+
+var IDLE_COLOR = function(nid) {{
+  var c = COLORS[nid] || "#254157";
+  return {{ background:"#0e2437", border:c }};
+}};
+var ACTIVE_COLOR = function(nid) {{
+  var c = COLORS[nid] || "#19c6b3";
+  return {{ background:c, border:"#fff" }};
+}};
+var DONE_COLOR = function(nid) {{
+  var c = COLORS[nid] || "#254157";
+  return {{ background:c+"33", border:c }};
+}};
 
 var _animTimer = null;
 
 function replayAnimation() {{
-  // Reset all nodes
-  nodeData.forEach(function(n) {{
-    nodes.update({{ id:n.id, color: GROUP_COLORS[n.group] || GROUP_COLORS.agent }});
-  }});
-  document.getElementById("status").textContent = "Replaying…";
+  nodeData.forEach(function(n) {{ nodes.update({{ id:n.id, color:IDLE_COLOR(n.id) }}); }});
+  document.getElementById("status").textContent = "Replaying run…";
   if (_animTimer) clearTimeout(_animTimer);
   var step = 0;
   function tick() {{
     if (step >= animSeq.length) {{
-      document.getElementById("status").textContent = "Done (" + animSeq.length + " nodes)";
+      document.getElementById("status").textContent = "✓ Run complete · " + animSeq.length + " nodes activated";
       return;
     }}
     var nid = animSeq[step];
-    // Flash active
-    nodes.update({{ id:nid, color:ACTIVE_COLOR }});
-    setTimeout(function() {{
-      nodes.update({{ id:nid, color:DONE_COLOR }});
-    }}, 350);
-    document.getElementById("status").textContent = "Active: " + nid;
+    nodes.update({{ id:nid, color:ACTIVE_COLOR(nid) }});
+    setTimeout(function() {{ nodes.update({{ id:nid, color:DONE_COLOR(nid) }}); }}, 400);
+    document.getElementById("status").textContent = "● " + nid + " processing…";
     step++;
-    _animTimer = setTimeout(tick, 520);
+    _animTimer = setTimeout(tick, 580);
   }}
   tick();
 }}
 
-// Auto-play on load
-setTimeout(replayAnimation, 400);
+// Auto-play
+setTimeout(function() {{ replayAnimation(); network.fit(); }}, 500);
 </script>
 </body>
 </html>"""
