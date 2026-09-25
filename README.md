@@ -23,15 +23,15 @@ scenario defaults** before a live run if a field was edited. In particular,
 `DATA` must remain `US Equity Index`; changing an identity field intentionally
 blocks catalog enrichment and demonstrates the fail-closed route.
 
-| Scenario | What it proves | Expected route |
-|---|---|---|
-| `SUNX` | Complete, low-cost golden path | `APPROVE`, no human touch |
-| `DATA` | Missing Sharpe ratio | Approved-source enrichment, retry `1/2`, then green `APPROVE` with no human touch |
-| `ALPHX` | Expense ratio over internal category cap | `ESCALATE` to human |
-| `SPECX` | Status, suitability and cost hard stops | `REJECT` recommendation; no autonomous execution |
-| `CONFX` | Conflicting source evidence | Fail closed to human |
-| `INJX` | Prompt-injection text inside evidence | Content isolated, scanner `BLOCKED`, human route |
-| `BLANK` | Fee absent from every approved source | Blank remains missing after `2/2`; compliance never runs |
+| Scenario | What it proves | Route | TFGS |
+|---|---|---|---|
+| `SUNX` | Complete, low-cost golden path | `APPROVE` — no human touch | 100 |
+| `DATA` | Missing Sharpe ratio | Approved-source enrichment, retry `1/2`, then `APPROVE_WITH_CONDITIONS` | 100 |
+| `ALPHX` | Expense ratio over internal category cap | `ESCALATE` to human | 100 |
+| `SPECX` | Status, suitability and cost hard stops | `REJECT` — no autonomous execution | 90 |
+| `CONFX` | Conflicting source evidence | `ESCALATE` — fail closed to human | 65 |
+| `INJX` | Prompt-injection text inside evidence | `ESCALATE` — content isolated, scanner `BLOCKED` | 85 |
+| `BLANK` | Fee absent from every approved source | `ESCALATE` — blank remains missing after `2/2` | 70 |
 
 For a terminal smoke demo:
 
@@ -46,15 +46,38 @@ flowchart LR
     A[1 Analyst / Reviewer] -->|complete| C[2 Compliance]
     A -->|missing data| R[Approved-source repair]
     R -->|max 2| A
-    A -->|still missing| S[5 Decision Owner]
-    C --> G[3 Governance / Suitability]
-    G --> F[4 Finance / Cost]
-    F --> S
-    S -->|all auto gates pass| E[Completed]
-    S -->|exception / conflict / boundary| H[Human checkpoint]
+    A -->|still missing| G2[3 Governance / Suitability]
+    C --> G2
+    G2 --> F[4 Finance / Cost]
+    F --> G[5 Fiduciary Governor]
+    G -->|TFGS ≥ 90, auto gates pass| E[Completed]
+    G -->|TFGS < 80, correctable| SC[Self-Correct node]
+    SC -->|retry budget remaining| A
+    G -->|exception / conflict / hard stop| H[Human checkpoint]
 ```
 
 LangGraph owns state and conditional routing. Amazon Bedrock Converse is an optional narrative layer. Deterministic Python owns validation, math, policy outcomes, risk scoring and human-intervention gates. The same graph has an Amazon Bedrock AgentCore entrypoint in [`agentcore_app.py`](agentcore_app.py).
+
+## TIAA Fiduciary Guardrail Score (TFGS) and Self-Correcting Loop
+
+The **Fiduciary Governor** (node `decision_owner`) computes a TFGS (0–100) before issuing any recommendation. TFGS starts at 100 and applies four deterministic deductions:
+
+| Condition | Deduction | Source agent |
+|---|---|---|
+| Any required field still missing after analysis | −15 | analyst |
+| Deterministic risk score > 35 | −10 | compliance |
+| Expense ratio within 10 bps of category cap | −10 | finance |
+| Any specialist confidence < 0.90 | −15 | lowest-confidence agent |
+
+**Routing thresholds** (from `config/policy_rules.json` `fiduciary_guardrail`):
+
+- TFGS ≥ 90 → auto-approve path if all other gates pass
+- TFGS < 90 → at minimum `APPROVE_WITH_CONDITIONS` or `ESCALATE`
+- TFGS < 80 → mandatory human review (`needs_human = True`)
+
+**Self-correcting loop**: when TFGS < 80 and the deficit is correctable (missing field that the catalog can fill), the Governor emits `SELF_CORRECT` and the graph routes back to the analyst. This is bounded by `max_retries` (default 2) and is **blocked** by conflicts, hard stops, analyst FAIL outcome, or retry exhaustion — so CONFX, INJX, and SPECX scenarios never enter the loop.
+
+Every Governor decision writes an **immutable `fiduciary_guardrail_receipt`** to state: TFGS score, itemized deductions, policy version/hash, decision, UTC timestamp, and a SHA-256 integrity hash. The receipt is also written to the JSONL audit trace and displayed in the Streamlit audit tab.
 
 AWS now describes Bedrock Agents as **Agents Classic** and directs new applications toward AgentCore. Fiducia therefore uses Bedrock Runtime/Converse plus an AgentCore-compatible adapter instead of creating a new Classic dependency. See the [official Agents Classic maintenance notice](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-classic-maintenance-mode.html) and [AgentCore Runtime documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html).
 
@@ -143,7 +166,11 @@ The automated suite covers:
 - audit-chain integrity and tamper detection;
 - strict API/ingress typing, including boolean-as-number attacks;
 - malformed plan profiles, absent load evidence and non-string identities;
-- regulatory-reference labeling that makes no legal-compliance determination.
+- regulatory-reference labeling that makes no legal-compliance determination;
+- TFGS score calculation (each deduction rule in isolation and stacked);
+- Fiduciary Governor self-correct routing, retry exhaustion, conflict and hard-stop guards;
+- all 7 demo scenarios locked to their documented routes — no scenario may end as SELF_CORRECT;
+- TFGS values for every scenario within expected ranges.
 
 ## Repository map
 
@@ -151,7 +178,7 @@ The automated suite covers:
 app.py                         Streamlit decision cockpit
 agentcore_app.py               Bedrock AgentCore runtime adapter
 fiducia/
-  agents.py                    Exactly five specialist implementations
+  agents.py                    Five specialists + Fiduciary Governor + calculate_tfgs_score()
   workflow.py                  LangGraph, conditional edges, retry and HITL nodes
   policy.py                    Deterministic policy and fee math
   prompts.py                   Explicit prompts and allowlisted tools
@@ -160,7 +187,7 @@ fiducia/
   validation.py                Strict external request and fail-closed ingress checks
 config/policy_rules.json       Versioned illustrative policy pack
 data/                          Synthetic intake and enrichment catalogs
-tests/                         Safety, routing, math and audit tests
+tests/                         Safety, routing, math, audit and TFGS guardrail tests
 docs/
   SUBMISSION_REPORT.md         Judge-facing project report
   ARCHITECTURE_AND_GOVERNANCE.md
@@ -186,7 +213,10 @@ scripts/generate_pitch_deck.py PowerPoint generator
 
 The fifth tab in the Streamlit UI surfaces a live view of agent execution after each run:
 
-- **Agent execution graph** — Graphviz DOT diagram showing each node colored by status (pending/running/done/failed/awaiting human). Special shapes for `data_repair` (diamond) and `human_checkpoint` (octagon). Edge labels show traversal counts.
+- **Animated agent process diagram** — Interactive vis-network graph with two toggle views:
+  - *Agents at Work* — left-to-right pipeline with live status, per-node pill badges (tool calls, Bedrock calls, latency ms, TFGS score on the Governor node), and color-coded outcomes. Animates through the execution sequence on load.
+  - *Process Diagram* — top-down flow view emphasizing the pipeline topology including the SELF_CORRECT backward edge (purple dashed) from Governor back to Analyst.
+  - Controls: Replay animation, Fit to window, Zoom in/out.
 - **KPI row** — Agents invoked, tool calls, Bedrock calls, tokens in/out, total latency, retries, human gates.
 - **Per-agent table** — Invocations, tool calls, LLM calls, token usage, latency and outcome per agent.
 - **Span Gantt chart** — Plotly timeline of all spans colored by kind (agent=teal, tool=gold, llm=purple, handoff=green).
