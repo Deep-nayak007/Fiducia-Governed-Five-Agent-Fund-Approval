@@ -4,3 +4,6 @@ langgraph==1.2.12
 boto3==1.43.101
 typing-extensions==4.16.0
 plotly>=5.0
+strands-agents>=0.1.0
+opentelemetry-sdk>=1.20
+opentelemetry-exporter-otlp-proto-grpc>=1.20

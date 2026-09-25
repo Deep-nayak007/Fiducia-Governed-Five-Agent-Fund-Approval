@@ -32,18 +32,19 @@ def test_missing_metric_is_repaired_once(tmp_path, funds):
     assert state["fund"]["sharpe_ratio"] == 1.01
     assert state["missing_fields"] == []
     assert state["conflicts"] == []
-    assert state["recommendation"] == "APPROVE"
-    assert state["risk_score"] == 0
+    # DATA has expense_ratio 0.11% > 0.08% benchmark → Finance WARN → APPROVE_WITH_CONDITIONS
+    assert state["recommendation"] == "APPROVE_WITH_CONDITIONS"
+    assert state["needs_human"] is True
+    assert state["risk_score"] > 0
     assert state["confidence"] == 0.94
-    assert state["needs_human"] is False
-    assert state["status"] == "COMPLETED"
-    assert state["agent_results"]["finance"]["outcome"] == "PASS"
+    assert state["status"] == "AWAITING_HUMAN_REVIEW"
+    assert state["agent_results"]["finance"]["outcome"] == "PASS_WITH_WARNING"
     benchmark_check = next(
         check
         for check in state["agent_results"]["finance"]["checks"]
         if check["rule_id"] == "FIN-BENCHMARK-002"
     )
-    assert benchmark_check["outcome"] == "PASS"
+    assert benchmark_check["outcome"] == "WARN"
     assert state["completed_agents"] == [
         "analyst",
         "compliance",
@@ -315,3 +316,27 @@ def test_enrichment_requires_composite_identity_match(tmp_path, funds):
     assert any("identity mismatch" in value for value in state["conflicts"])
     assert state["recommendation"] == "ESCALATE"
     assert "compliance" not in state["completed_agents"]
+
+
+# ---------------------------------------------------------------------------
+# Parametrized scenario-lock test — pins every README demo route in offline mode
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("ticker,expected_rec,expected_human", [
+    ("SUNX",  "APPROVE",                  False),
+    ("DATA",  "APPROVE_WITH_CONDITIONS",  True),
+    ("ALPHX", "ESCALATE",                 True),
+    ("SPECX", "REJECT",                   True),
+    ("CONFX", "ESCALATE",                 True),
+    ("INJX",  "ESCALATE",                 True),
+    ("BLANK", "ESCALATE",                 True),
+])
+def test_scenario_route_locked(tmp_path, funds, ticker, expected_rec, expected_human):
+    """Regression guard: every README scenario must produce its documented route."""
+    state = run_case(tmp_path, funds, ticker)
+    assert state["recommendation"] == expected_rec, (
+        f"{ticker}: expected {expected_rec!r}, got {state['recommendation']!r}"
+    )
+    assert state["needs_human"] is expected_human, (
+        f"{ticker}: expected needs_human={expected_human}, got {state['needs_human']}"
+    )

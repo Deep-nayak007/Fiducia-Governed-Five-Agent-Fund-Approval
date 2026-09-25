@@ -316,6 +316,11 @@ def run_workflow(
         final["spans"] = [s.to_dict() for s in tracer.spans]
         final["handoffs"] = list(tracer.handoffs)
     AuditLogger(final["audit_path"]).append(trace_id=final["trace_id"], event_type="WORKFLOW_CHECKPOINT", actor="orchestrator", payload={"status": final["status"], "recommendation": final["recommendation"], "risk_score": final["risk_score"], "confidence": final["confidence"], "needs_human": final["needs_human"], "human_reasons": final["human_reasons"], "final_summary": final["final_summary"]})
+    try:
+        from fiducia.observability import post_run_telemetry
+        post_run_telemetry(final)
+    except Exception:
+        pass
     return final
 
 

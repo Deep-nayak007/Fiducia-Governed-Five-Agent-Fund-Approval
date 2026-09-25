@@ -360,8 +360,8 @@ def _build_mermaid(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-cockpit_tab, agents_tab, audit_tab, architecture_tab, monitor_tab = st.tabs(
-    ["Decision cockpit", "Agent workspace", "Audit & controls", "Architecture & value", "Orchestration Monitor"]
+cockpit_tab, agents_tab, audit_tab, architecture_tab, monitor_tab, chat_tab = st.tabs(
+    ["Decision cockpit", "Agent workspace", "Audit & controls", "Architecture & value", "Orchestration Monitor", "Ask Fiducia"]
 )
 
 with cockpit_tab:
@@ -689,17 +689,175 @@ with architecture_tab:
         "[AWS AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html) · [SEC fee bulletin](https://www.sec.gov/investor/alerts/ib_mutualfundfees.pdf) · [FINRA Rule 2341](https://www.finra.org/rules-guidance/rulebooks/finra-rules/2341)"
     )
 
+def _build_visnetwork_html(state: dict) -> str:
+    """Return a self-contained HTML string with an animated vis-network agent graph."""
+    completed = state.get("completed_agents", [])
+    needs_human = state.get("needs_human", False)
+    handoffs = state.get("handoffs", [])
+    spans = state.get("spans", [])
+    per_agent_metrics = state.get("run_metrics", {}).get("per_agent", {})
+    retries = state.get("retries", 0)
+    recommendation = state.get("recommendation", "")
+
+    # Tool call counts per agent
+    tool_counts: dict[str, int] = {}
+    for sp in spans:
+        if sp.get("kind") == "tool":
+            ag = sp.get("attributes", {}).get("agent", sp.get("from_agent", ""))
+            if ag:
+                tool_counts[ag] = tool_counts.get(ag, 0) + 1
+
+    # Build node list: router → agents → human_gate
+    node_defs = [
+        {"id": "router", "label": "Strands\nRouter", "group": "router", "title": "Natural-language entry point"},
+        {"id": "analyst", "label": f"Analyst\n[{tool_counts.get('analyst', 0)} tools]", "group": "agent",
+         "title": f"Analyst agent · tools={tool_counts.get('analyst',0)}"},
+        {"id": "compliance", "label": f"Compliance\n[{tool_counts.get('compliance', 0)} tools]", "group": "agent",
+         "title": f"Compliance agent · tools={tool_counts.get('compliance',0)}"},
+        {"id": "governance", "label": f"Governance\n[{tool_counts.get('governance', 0)} tools]", "group": "agent",
+         "title": f"Governance agent · tools={tool_counts.get('governance',0)}"},
+        {"id": "finance", "label": f"Finance\n[{tool_counts.get('finance', 0)} tools]", "group": "agent",
+         "title": f"Finance agent · tools={tool_counts.get('finance',0)}"},
+        {"id": "decision_owner", "label": f"Decision\nOwner\n[{tool_counts.get('decision_owner', 0)} tools]",
+         "group": "agent", "title": f"Decision owner · tools={tool_counts.get('decision_owner',0)}"},
+    ]
+    if needs_human:
+        node_defs.append({"id": "human_gate", "label": f"Human\nReview\n({recommendation})",
+                           "group": "human", "title": "Human-in-the-loop gate"})
+    if retries > 0:
+        node_defs.append({"id": "data_repair", "label": f"Data\nRepair\n×{retries}",
+                           "group": "retry", "title": f"{retries} repair attempt(s)"})
+
+    # Edge list
+    _PIPELINE = ["analyst", "compliance", "governance", "finance", "decision_owner"]
+    edge_defs = [{"from": "router", "to": "analyst", "label": "invoke", "dashes": True}]
+    for i in range(len(_PIPELINE) - 1):
+        edge_defs.append({"from": _PIPELINE[i], "to": _PIPELINE[i + 1], "label": "→"})
+    if retries > 0:
+        edge_defs.append({"from": "analyst", "to": "data_repair", "label": "repair", "color": "#ff9966"})
+        edge_defs.append({"from": "data_repair", "to": "analyst", "label": "retry", "color": "#ff9966", "dashes": True})
+    if needs_human:
+        edge_defs.append({"from": "decision_owner", "to": "human_gate", "label": "escalate",
+                           "color": "#f4b942", "width": 3})
+    for h in handoffs[:6]:
+        frm, to = h.get("from", ""), h.get("to", "")
+        if frm and to and frm != to and frm in {n["id"] for n in node_defs} and to in {n["id"] for n in node_defs}:
+            edge_defs.append({"from": frm, "to": to, "label": h.get("message_type", ""), "color": "#19c6b3",
+                               "dashes": [5, 5]})
+
+    # Animation sequence: completed agents in order
+    anim_sequence = json.dumps(["router"] + completed + (["human_gate"] if needs_human else []))
+
+    nodes_js = json.dumps(node_defs)
+    edges_js = json.dumps(edge_defs)
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"
+  integrity="sha512-M6RAojasCzsf7tNiMQhA1bDE7hNPaCuDzBb+f2wKLXH53j/xWR/AiB73MsCLEzMNTwWLqtWbTJm2V3ACyCcA=="
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+  body {{ margin:0; background:#071321; font-family:'DM Sans',sans-serif; }}
+  #net {{ width:100%; height:320px; border:1px solid #1e3c50; border-radius:8px; background:#0d2033; }}
+  #controls {{ display:flex; gap:8px; padding:6px 4px; align-items:center; }}
+  button {{ background:#19c6b3; color:#071321; border:none; padding:5px 14px; border-radius:6px;
+             font-weight:700; cursor:pointer; font-size:.82rem; }}
+  button:hover {{ background:#0fa898; }}
+  #status {{ color:#91a7b8; font-size:.78rem; }}
+</style>
+</head>
+<body>
+<div id="controls">
+  <button onclick="replayAnimation()">▶ Replay run</button>
+  <span id="status">Ready</span>
+</div>
+<div id="net"></div>
+<script>
+var GROUP_COLORS = {{
+  router:  {{ background:"#254157", border:"#19c6b3", highlight:{{background:"#19c6b3",border:"#ffffff"}} }},
+  agent:   {{ background:"#0e2437", border:"#254157", highlight:{{background:"#19c6b3",border:"#ffffff"}} }},
+  human:   {{ background:"#3a2200", border:"#f4b942", highlight:{{background:"#f4b942",border:"#ffffff"}} }},
+  retry:   {{ background:"#2a1800", border:"#ff9966", highlight:{{background:"#ff9966",border:"#ffffff"}} }},
+}};
+var ACTIVE_COLOR = {{ background:"#19c6b3", border:"#ffffff", fontColor:"#071321" }};
+var DONE_COLOR   = {{ background:"#0f4035", border:"#19c6b3" }};
+
+var nodeData = {nodes_js};
+var edgeData = {edges_js};
+var animSeq  = {anim_sequence};
+
+// Assign group colors
+nodeData.forEach(function(n) {{
+  var gc = GROUP_COLORS[n.group] || GROUP_COLORS.agent;
+  n.color = gc;
+  n.font  = {{ color:"#d3dce4", size:11, multi:true }};
+  n.shape = n.group === "human" ? "diamond" : (n.group === "router" ? "hexagon" : "box");
+  n.margin = 8;
+}});
+
+edgeData.forEach(function(e) {{
+  if (!e.color) e.color = {{ color:"#254157", highlight:"#19c6b3" }};
+  else e.color = {{ color: e.color, highlight:"#ffffff" }};
+  e.font = {{ color:"#91a7b8", size:9, align:"middle" }};
+  e.arrows = "to";
+  e.smooth = {{ type:"curvedCW", roundness:0.15 }};
+}});
+
+var nodes = new vis.DataSet(nodeData);
+var edges = new vis.DataSet(edgeData);
+var container = document.getElementById("net");
+var network = new vis.Network(container, {{nodes:nodes, edges:edges}}, {{
+  layout: {{ hierarchical: {{ enabled:true, direction:"LR", sortMethod:"directed", levelSeparation:110, nodeSpacing:60 }} }},
+  physics: {{ enabled:false }},
+  interaction: {{ tooltipDelay:200, zoomView:false }},
+}});
+
+var _animTimer = null;
+
+function replayAnimation() {{
+  // Reset all nodes
+  nodeData.forEach(function(n) {{
+    nodes.update({{ id:n.id, color: GROUP_COLORS[n.group] || GROUP_COLORS.agent }});
+  }});
+  document.getElementById("status").textContent = "Replaying…";
+  if (_animTimer) clearTimeout(_animTimer);
+  var step = 0;
+  function tick() {{
+    if (step >= animSeq.length) {{
+      document.getElementById("status").textContent = "Done (" + animSeq.length + " nodes)";
+      return;
+    }}
+    var nid = animSeq[step];
+    // Flash active
+    nodes.update({{ id:nid, color:ACTIVE_COLOR }});
+    setTimeout(function() {{
+      nodes.update({{ id:nid, color:DONE_COLOR }});
+    }}, 350);
+    document.getElementById("status").textContent = "Active: " + nid;
+    step++;
+    _animTimer = setTimeout(tick, 520);
+  }}
+  tick();
+}}
+
+// Auto-play on load
+setTimeout(replayAnimation, 400);
+</script>
+</body>
+</html>"""
+
+
 with monitor_tab:
     st.markdown("### Orchestration Monitor")
     if not state:
         st.info("Run a case to populate the orchestration monitor.")
     else:
-        # 3a. Live agent graph
+        # 3a. Animated agent graph
         st.markdown("#### Agent execution graph")
-        try:
-            st.graphviz_chart(build_dot(state))
-        except Exception as _gv_err:
-            st.caption(f"Graphviz chart unavailable: {_gv_err}")
+        import streamlit.components.v1 as _stc
+        _stc.html(_build_visnetwork_html(state), height=380)
 
         # 3b. KPI row
         metrics_data = state.get("run_metrics", {})
@@ -835,6 +993,112 @@ with monitor_tab:
                         batch_results.append({"Ticker": ticker, "Route": f"ERROR: {batch_err}"})
             if batch_results:
                 st.dataframe(pd.DataFrame(batch_results), hide_index=True)
+
+with chat_tab:
+    st.markdown("### Ask Fiducia")
+    st.caption(
+        "Natural-language interface to the governed workflow. "
+        'Try: "Run approval for DATA" or "What is SUNX\'s recommendation?" '
+        "Responses route through the Strands agent when Bedrock is configured; offline mode answers directly."
+    )
+
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []
+
+    for msg in st.session_state["chat_history"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_input = st.chat_input("Ask about a fund or approval…")
+    if user_input:
+        st.session_state["chat_history"].append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Routing through Fiducia…"):
+                try:
+                    _model_mode = st.session_state.get("model_mode", "offline")
+
+                    # Try Strands router (requires bedrock mode + strands installed)
+                    _router_response = None
+                    if _model_mode == "bedrock":
+                        try:
+                            from strands import Agent, tool as strands_tool
+                            from strands.models import BedrockModel
+                            from fiducia.tools import load_funds as _load_funds_chat
+                            from fiducia.workflow import run_workflow as _run_wf_chat
+
+                            _funds_chat = {f["ticker"]: f for f in _load_funds_chat()}
+
+                            @strands_tool
+                            def run_fund_approval(ticker: str) -> dict:
+                                """Run the Fiducia governed approval workflow for a fund ticker.
+
+                                Args:
+                                    ticker: Fund ticker symbol (e.g. SUNX, DATA).
+
+                                Returns:
+                                    Approval result dict with recommendation and summary.
+                                """
+                                fund = _funds_chat.get(ticker.strip().upper())
+                                if fund is None:
+                                    return {"error": f"Unknown ticker: {ticker}"}
+                                _s = _run_wf_chat(fund, model_mode=_model_mode)
+                                return {
+                                    "ticker": ticker.upper(),
+                                    "recommendation": _s["recommendation"],
+                                    "risk_score": _s["risk_score"],
+                                    "needs_human": _s["needs_human"],
+                                    "summary": _s["final_summary"],
+                                }
+
+                            _nl_system = (
+                                "You are Fiducia, a governed fund-approval assistant. "
+                                "For fund approvals, always call run_fund_approval. "
+                                "Never invent outcomes — only tool results are authoritative."
+                            )
+                            _bedrock_m = BedrockModel(model_id="us.anthropic.claude-sonnet-5", region_name="us-east-1")
+                            _router = Agent(model=_bedrock_m, system_prompt=_nl_system, tools=[run_fund_approval])
+                            _router_response = str(_router(user_input))
+                        except Exception as _strands_err:
+                            _router_response = None  # fall through to offline
+
+                    if _router_response is None:
+                        # Offline: simple ticker extraction fallback
+                        import re
+                        from fiducia.tools import load_funds as _lf
+                        from fiducia.workflow import run_workflow as _rwf
+                        _all_tickers = {f["ticker"] for f in _lf()}
+                        _found = [t for t in _all_tickers if re.search(rf"\b{re.escape(t)}\b", user_input, re.I)]
+                        if _found:
+                            ticker_hit = _found[0].upper()
+                            fund_hit = {f["ticker"]: f for f in _lf()}[ticker_hit]
+                            _ws = _rwf(fund_hit, model_mode="offline")
+                            _router_response = (
+                                f"**{ticker_hit}** — {_ws['recommendation']}  \n"
+                                f"{_ws['final_summary']}  \n"
+                                f"Needs human review: {'Yes' if _ws['needs_human'] else 'No'}"
+                            )
+                        else:
+                            _router_response = (
+                                "I can run governed approvals for these funds: "
+                                + ", ".join(sorted(_all_tickers))
+                                + ". Try asking: *Run approval for SUNX*."
+                            )
+
+                    st.markdown(_router_response)
+                    st.session_state["chat_history"].append({"role": "assistant", "content": _router_response})
+                except Exception as _chat_err:
+                    _err_msg = f"Router error: {_chat_err}"
+                    st.error(_err_msg)
+                    st.session_state["chat_history"].append({"role": "assistant", "content": _err_msg})
+
+    if st.session_state["chat_history"]:
+        if st.button("Clear chat", key="clear_chat"):
+            st.session_state["chat_history"] = []
+            st.rerun()
+
 
 st.markdown(
     '<div class="footer-note">Fiducia is a synthetic hackathon prototype for decision support. It is not legal, fiduciary, tax, or investment advice—and it does not represent TIAA internal policy.</div>',
