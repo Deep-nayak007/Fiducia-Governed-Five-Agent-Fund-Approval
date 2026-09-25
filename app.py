@@ -519,6 +519,28 @@ with cockpit_tab:
                 f'<div class="summary">{safe(state.get("final_summary", ""))}</div></div>',
                 unsafe_allow_html=True,
             )
+            # Self-correcting loop banner
+            if state.get("retries", 0) > 0:
+                st.markdown(
+                    '<div class="alert gold"><b>⚠️ Self-Correcting Loop Triggered</b><br>'
+                    'Fiduciary Governor detected anomaly and forced agent re-evaluation. '
+                    f'Retry {state["retries"]}/{state.get("max_retries", 2)} completed.</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # TFGS card
+            tfgs = state.get("tfgs_score", 0)
+            _tfgs_color = "#57d49b" if tfgs >= 90 else "#f4b942" if tfgs >= 80 else "#ff6b6b"
+            st.markdown(
+                f'<div style="background:linear-gradient(145deg,#0e2437,#0a1a2a);border:2px solid {_tfgs_color};'
+                f'border-radius:14px;padding:14px 18px;margin-bottom:12px;">'
+                f'<div style="color:#91a7b8;font-size:.72rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;">TIAA Fiduciary Guardrail Score</div>'
+                f'<div style="color:{_tfgs_color};font-size:2.1rem;font-weight:800;line-height:1.1;">{tfgs}/100</div>'
+                f'<div style="color:#91a7b8;font-size:.78rem;">{"✅ Auto-approval eligible" if tfgs >= 90 else "⚠️ Human review required" if tfgs < 80 else "⚡ Conditional — review advised"}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
             metric_a, metric_b, metric_c, metric_d = st.columns(4)
             metric_a.metric("Risk", f"{state.get('risk_score', 0)}/100")
             metric_b.metric("Confidence", f"{float(state.get('confidence', 0)):.0%}")
@@ -656,6 +678,12 @@ with audit_tab:
         for gate in gates:
             st.markdown(f"- {gate}")
         st.caption(f"Policy SHA-256: {state.get('policy_hash', 'n/a')}")
+
+        # Fiduciary Guardrail Receipt
+        receipt = state.get("fiduciary_guardrail_receipt", {})
+        if receipt:
+            with st.expander("View Immutable Audit Metadata Receipt — Fiduciary Guardrail (TFGS)"):
+                st.json(receipt)
 
 with architecture_tab:
     st.markdown("### Enterprise architecture")

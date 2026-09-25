@@ -1,7 +1,7 @@
 {
   "metadata": {
     "policy_name": "Fiducia Illustrative Retirement Plan Fund Policy",
-    "version": "2026.09-demo.1",
+    "version": "2026.09-demo.2",
     "effective_date": "2026-09-22",
     "owner": "Demo Investment Policy Committee",
     "authority_type": "illustrative_internal_policy",
@@ -34,17 +34,50 @@
     "future_date_tolerance_days": 1,
     "fee_reconciliation_tolerance_bps": 1,
     "numeric_ranges": {
-      "nav": [0.0001, 1000000],
-      "expense_ratio": [0, 20],
-      "sharpe_ratio": [-10, 10],
-      "fee_12b1": [0, 5],
-      "distribution_12b1_fee": [0, 5],
-      "service_fee": [0, 5],
-      "sales_load_pct": [0, 10],
-      "turnover_rate": [0, 5000],
-      "aum_millions": [0, 10000000],
-      "track_record_years": [0, 200],
-      "risk_score": [1, 10]
+      "nav": [
+        0.0001,
+        1000000
+      ],
+      "expense_ratio": [
+        0,
+        20
+      ],
+      "sharpe_ratio": [
+        -10,
+        10
+      ],
+      "fee_12b1": [
+        0,
+        5
+      ],
+      "distribution_12b1_fee": [
+        0,
+        5
+      ],
+      "service_fee": [
+        0,
+        5
+      ],
+      "sales_load_pct": [
+        0,
+        10
+      ],
+      "turnover_rate": [
+        0,
+        5000
+      ],
+      "aum_millions": [
+        0,
+        10000000
+      ],
+      "track_record_years": [
+        0,
+        200
+      ],
+      "risk_score": [
+        1,
+        10
+      ]
     }
   },
   "compliance": {
@@ -52,9 +85,17 @@
     "illustrative_service_fee_reference_max_pct": 0.25,
     "illustrative_combined_12b1_reference_max_pct": 1.0,
     "internal_retirement_plan_12b1_max_pct": 0.25,
-    "allowed_regulatory_statuses": ["Clear"],
-    "allowed_fund_types": ["Mutual Fund", "ETF"],
-    "blocked_fund_types": ["Leveraged ETF", "Inverse ETF"],
+    "allowed_regulatory_statuses": [
+      "Clear"
+    ],
+    "allowed_fund_types": [
+      "Mutual Fund",
+      "ETF"
+    ],
+    "blocked_fund_types": [
+      "Leveraged ETF",
+      "Inverse ETF"
+    ],
     "note": "Thresholds are configurable demo controls, not a legal conclusion. Counsel owns production rules."
   },
   "suitability": {
@@ -76,19 +117,19 @@
       "US Equity Index": 0.25,
       "US Equity Active": 0.75,
       "International Equity": 0.85,
-      "Investment Grade Bond": 0.60,
+      "Investment Grade Bond": 0.6,
       "Target Date": 0.65,
-      "Balanced": 0.70,
-      "Other": 0.80
+      "Balanced": 0.7,
+      "Other": 0.8
     },
     "benchmark_expense_ratio_pct": {
       "US Equity Index": 0.08,
       "US Equity Active": 0.55,
-      "International Equity": 0.50,
+      "International Equity": 0.5,
       "Investment Grade Bond": 0.35,
       "Target Date": 0.45,
-      "Balanced": 0.50,
-      "Other": 0.60
+      "Balanced": 0.5,
+      "Other": 0.6
     },
     "default_investment_amount": 1000000,
     "default_horizon_years": 20,
@@ -96,7 +137,7 @@
     "front_end_load_requires_human_above_pct": 0.0
   },
   "human_in_the_loop": {
-    "minimum_auto_approval_confidence": 0.90,
+    "minimum_auto_approval_confidence": 0.9,
     "escalate_below_confidence": 0.85,
     "auto_approval_max_risk_score": 24,
     "mandatory_review_risk_score": 40,
@@ -118,5 +159,10 @@
     "reject_at_or_above": 60,
     "escalate_at_or_above": 25,
     "maximum_score": 100
+  },
+  "fiduciary_guardrail": {
+    "auto_approve_minimum_score": 90,
+    "self_correct_threshold": 80,
+    "mandatory_human_review_below": 80
   }
 }

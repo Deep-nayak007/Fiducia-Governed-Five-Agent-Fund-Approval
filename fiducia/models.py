@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 
-Decision = Literal["APPROVE", "APPROVE_WITH_CONDITIONS", "ESCALATE", "REJECT", "PENDING"]
+Decision = Literal["APPROVE", "APPROVE_WITH_CONDITIONS", "ESCALATE", "REJECT", "PENDING", "SELF_CORRECT"]
 
 
 class WorkflowState(TypedDict, total=False):
@@ -39,10 +39,13 @@ class WorkflowState(TypedDict, total=False):
     final_summary: str
     audit_path: str
     model_mode: str
-    spans: list[dict[str, Any]]       # serialized Span dicts
-    handoffs: list[dict[str, Any]]    # handoff envelopes
-    run_metrics: dict[str, Any]       # from Tracer.metrics()
-    tracer: Any                       # Tracer instance (not serialized to audit)
+    spans: list[dict[str, Any]]           # serialized Span dicts
+    handoffs: list[dict[str, Any]]        # handoff envelopes
+    run_metrics: dict[str, Any]           # from Tracer.metrics()
+    tracer: Any                           # Tracer instance (not serialized to audit)
+    fiduciary_guardrail_receipt: dict[str, Any]  # TFGS receipt written by Fiduciary Governor
+    tfgs_score: int                       # TIAA Fiduciary Guardrail Score (0-100)
+    self_correct_target: str              # "analyst" | "compliance" when SELF_CORRECT
 
 
 AGENT_ORDER = [
@@ -59,5 +62,5 @@ AGENT_LABELS = {
     "compliance": "Compliance & Regulatory",
     "governance": "Governance & Suitability",
     "finance": "Finance & Cost Analysis",
-    "decision_owner": "Decision Owner / Sponsor",
+    "decision_owner": "Fiduciary Governor",
 }

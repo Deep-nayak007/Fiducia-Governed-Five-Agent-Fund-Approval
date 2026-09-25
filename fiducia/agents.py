@@ -503,7 +503,84 @@ class FinanceAgent(BaseAgent):
         return self._finish(state, {"outcome": outcome, "confidence": confidence, "checks": checks, "projection": projection, "cap_delta_bps": cap_delta_bps, "benchmark_delta_bps": benchmark_delta_bps, "fee_boundary_flag": boundary_flag, "breakpoint_status": breakpoint_status, "breakpoint_analysis": breakpoint_analysis, "rationale": rationale, "model": model, "tools": TOOL_SETS[self.key], "disclaimer": "Illustration assumes a constant gross return and is not a forecast."})
 
 
-class DecisionOwnerAgent(BaseAgent):
+import datetime as _dt
+
+
+def calculate_tfgs_score(state: dict) -> dict:
+    """Calculate TIAA Fiduciary Guardrail Score (TFGS).
+
+    Starts at 100 and deducts for each of four risk signals. Returns score
+    (0-100) plus an itemized deduction list for the audit receipt.
+    """
+    from .policy import expense_cap, numeric  # local import to avoid circularity in tests
+
+    results = state.get("agent_results", {})
+    missing = state.get("missing_fields", [])
+    risk_score = int(state.get("risk_score", 0))
+    fund = state.get("fund", {})
+    policy = state.get("policy") or {}
+
+    score = 100
+    deductions: list[dict] = []
+
+    if missing:
+        score -= 15
+        deductions.append({
+            "reason": "Missing required data fields",
+            "points": -15,
+            "source_agent": "analyst",
+            "evidence_field": "missing_fields",
+            "detail": list(missing)[:5],
+        })
+
+    if risk_score > 35:
+        score -= 10
+        deductions.append({
+            "reason": f"Deterministic risk score {risk_score} exceeds 35",
+            "points": -10,
+            "source_agent": "decision_owner",
+            "evidence_field": "risk_score",
+            "detail": risk_score,
+        })
+
+    try:
+        asset_class = str(fund.get("asset_class", "Other"))
+        exp = numeric(fund.get("expense_ratio", 0))
+        cap = expense_cap(asset_class, policy) if policy.get("fees") else 0.0
+        delta_bps = abs(exp - cap) * 100
+        if delta_bps <= 10.0:
+            score -= 10
+            deductions.append({
+                "reason": f"Expense ratio {exp:.3f}% within {delta_bps:.1f} bps of cap {cap:.3f}%",
+                "points": -10,
+                "source_agent": "finance",
+                "evidence_field": "expense_ratio",
+                "detail": {"expense_ratio": exp, "cap": cap, "delta_bps": round(delta_bps, 2)},
+            })
+    except Exception:
+        pass
+
+    low_conf = [
+        {"agent": k, "confidence": round(numeric(results[k].get("confidence", 1.0)), 3)}
+        for k in ("analyst", "compliance", "governance", "finance")
+        if k in results and numeric(results[k].get("confidence", 1.0)) < 0.90
+    ]
+    if low_conf:
+        score -= 15
+        deductions.append({
+            "reason": "Specialist confidence below 0.90",
+            "points": -15,
+            "source_agent": "multiple" if len(low_conf) > 1 else low_conf[0]["agent"],
+            "evidence_field": "confidence",
+            "detail": low_conf,
+        })
+
+    return {"score": max(0, score), "deductions": deductions}
+
+
+class FiduciaryGovernorAgent(BaseAgent):
+    """Fiduciary Governor — deterministic final gate + TIAA Fiduciary Guardrail Score."""
+
     key = "decision_owner"
 
     def run(self, incoming: WorkflowState) -> WorkflowState:
@@ -565,29 +642,126 @@ class DecisionOwnerAgent(BaseAgent):
         if needs_human and recommendation == "APPROVE":
             recommendation = "ESCALATE"
 
+        # ── TIAA Fiduciary Guardrail Score ──────────────────────────────────────
+        state["risk_score"] = risk_score  # required by calculate_tfgs_score
+        tfgs_data = calculate_tfgs_score(state)
+        tfgs_score = tfgs_data["score"]
+        gc = state["policy"].get("fiduciary_guardrail", {})
+        auto_min = int(gc.get("auto_approve_minimum_score", 90))
+        sc_thresh = int(gc.get("self_correct_threshold", 80))
+
+        # TFGS only ever tightens gates — never loosens
+        if tfgs_score < auto_min and not needs_human:
+            needs_human = True
+            human_reasons.append(f"TFGS {tfgs_score}/100 is below auto-approval minimum {auto_min}")
+            if recommendation == "APPROVE":
+                recommendation = "ESCALATE"
+
+        # SELF_CORRECT: governor forces a re-evaluation when the deduction is a
+        # resolvable data anomaly and the retry budget is not exhausted.
+        # GUARDRAILS: never self-correct on hard stops, conflicts (CONFX/INJX),
+        # analyst FAIL (range errors), or REJECT.
+        self_correct_target: str | None = None
+        governor_decision = "AUTO_APPROVE" if (not needs_human) else "HUMAN_REVIEW"
+
+        if (
+            tfgs_score < sc_thresh
+            and recommendation not in ("REJECT",)
+            and not hard_stops
+            and not conflicts                          # guards CONFX, INJX
+            and int(state.get("retries", 0)) < int(state.get("max_retries", 2))
+            and results.get("analyst", {}).get("outcome") not in ("FAIL",)
+            and missing                                # only when missing data is the cause
+        ):
+            recommendation = "SELF_CORRECT"
+            self_correct_target = "analyst"
+            governor_decision = "SELF_CORRECT"
+            needs_human = False
+
+        # ── Write immutable fiduciary_guardrail_receipt ──────────────────────────
+        receipt_body: dict = {
+            "tfgs_score": tfgs_score,
+            "thresholds": {
+                "auto_approve_minimum": auto_min,
+                "self_correct_threshold": sc_thresh,
+            },
+            "policy_version": state.get("policy_version", ""),
+            "policy_hash": state.get("policy_hash", ""),
+            "itemized_deductions": tfgs_data["deductions"],
+            "decision": governor_decision,
+            "self_correct_target": self_correct_target,
+            "retries_used": state.get("retries", 0),
+            "max_retries": state.get("max_retries", 2),
+            "timestamp_utc": _dt.datetime.utcnow().isoformat() + "Z",
+        }
+        receipt_body["receipt_sha256"] = hashlib.sha256(
+            json.dumps(receipt_body, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+        state["fiduciary_guardrail_receipt"] = receipt_body
+        state["tfgs_score"] = tfgs_score
+        state["self_correct_target"] = self_correct_target
+
+        # Emit a telemetry span for the TFGS receipt
+        tracer = state.get("tracer")
+        if tracer is not None:
+            span = tracer.start_span(
+                "tool", "fiduciary_guardrail_score",
+                agent=self.key,
+                tfgs_score=tfgs_score,
+                governor_decision=governor_decision,
+                deduction_count=len(tfgs_data["deductions"]),
+            )
+            tracer.end_span(span, "ok")
+
+        # Append receipt to hash-chained audit log
+        self._audit(state, "FIDUCIARY_GUARDRAIL_RECEIPT", receipt_body)
+
+        # ── Finalize state ───────────────────────────────────────────────────────
         decisive = {
             "hard_stops": hard_stops,
             "conflicts": conflicts,
             "missing_fields": missing,
-            "failed_agents": [key for key, result in results.items() if result.get("outcome") == "FAIL"],
+            "failed_agents": [k for k, r in results.items() if r.get("outcome") == "FAIL"],
         }
         self._record_tool(state, "finding_aggregator", {"specialist_count": len(specialist_results)}, f"failures={failures}, warnings={warnings_count}")
         self._record_tool(state, "deterministic_risk_scorer", {"hard_stops": len(hard_stops), "failures": failures, "conflicts": len(conflicts), "missing": len(missing)}, f"risk_score={risk_score}")
         self._record_tool(state, "HITL_router", {"recommendation": recommendation, "confidence": confidence, "risk_score": risk_score}, f"needs_human={needs_human}")
-        facts = {"recommendation": recommendation, "risk_score": risk_score, "confidence": confidence, "human_reasons": human_reasons, "decisive_evidence": decisive}
-        fallback = f"Recommendation: {recommendation}. Deterministic risk is {risk_score}/100 with {confidence:.0%} minimum specialist confidence. " + (f"Human review is required: {'; '.join(human_reasons)}." if needs_human else "All auto-approval gates passed.")
-        rationale, model = self._narrative(state, facts, fallback, deterministic_outcome=recommendation)
+        facts = {"recommendation": recommendation, "risk_score": risk_score, "confidence": confidence, "tfgs_score": tfgs_score, "human_reasons": human_reasons, "decisive_evidence": decisive}
+        fallback = (
+            f"Recommendation: {recommendation}. Deterministic risk is {risk_score}/100 with "
+            f"{confidence:.0%} minimum specialist confidence. TFGS: {tfgs_score}/100. "
+            + (f"Human review is required: {'; '.join(human_reasons)}." if needs_human and recommendation != "SELF_CORRECT"
+               else "All auto-approval gates passed." if not needs_human
+               else f"Fiduciary Governor triggered self-correction (target: {self_correct_target}).")
+        )
+        rationale, model = self._narrative(state, facts, fallback, deterministic_outcome=recommendation if recommendation != "SELF_CORRECT" else "ESCALATE")
 
-        state["risk_score"] = risk_score
         state["confidence"] = confidence
         state["recommendation"] = recommendation
         state["needs_human"] = needs_human
         state["human_reasons"] = human_reasons
-        # The prominent decision summary is deterministic. Optional model prose may
-        # appear in the agent detail, but it cannot contradict or replace this gate.
-        state["final_summary"] = fallback
-        state["status"] = "AWAITING_HUMAN_REVIEW" if needs_human else "COMPLETED"
-        result = {"outcome": recommendation, "confidence": confidence, "risk_score": risk_score, "risk_formula": {"version": scoring["formula_version"], "weights": weights, "reject_at_or_above": scoring["reject_at_or_above"], "escalate_at_or_above": scoring["escalate_at_or_above"]}, "needs_human": needs_human, "human_reasons": human_reasons, "decisive_evidence": decisive, "authoritative_summary": fallback, "rationale": rationale, "model": model, "tools": TOOL_SETS[self.key]}
+        if recommendation != "SELF_CORRECT":
+            state["final_summary"] = fallback
+            state["status"] = "AWAITING_HUMAN_REVIEW" if needs_human else "COMPLETED"
+        else:
+            state["status"] = "SELF_CORRECTING"
+
+        result = {
+            "outcome": recommendation,
+            "confidence": confidence,
+            "risk_score": risk_score,
+            "tfgs_score": tfgs_score,
+            "governor_decision": governor_decision,
+            "risk_formula": {"version": scoring["formula_version"], "weights": weights, "reject_at_or_above": scoring["reject_at_or_above"], "escalate_at_or_above": scoring["escalate_at_or_above"]},
+            "needs_human": needs_human,
+            "human_reasons": human_reasons,
+            "decisive_evidence": decisive,
+            "authoritative_summary": fallback,
+            "rationale": rationale,
+            "model": model,
+            "tools": TOOL_SETS[self.key],
+        }
         return self._finish(state, result)
 
 
@@ -596,5 +770,5 @@ AGENTS = {
     "compliance": ComplianceAgent(),
     "governance": GovernanceAgent(),
     "finance": FinanceAgent(),
-    "decision_owner": DecisionOwnerAgent(),
+    "decision_owner": FiduciaryGovernorAgent(),
 }

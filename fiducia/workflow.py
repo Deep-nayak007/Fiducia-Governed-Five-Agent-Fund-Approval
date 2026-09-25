@@ -94,6 +94,9 @@ def create_initial_state(
         "handoffs": [],
         "run_metrics": {},
         "tracer": Tracer(resolved_trace),
+        "fiduciary_guardrail_receipt": {},
+        "tfgs_score": 0,
+        "self_correct_target": None,
     }
     AuditLogger(resolved_audit).append(
         trace_id=resolved_trace,
@@ -251,8 +254,78 @@ def route_after_analyst(state: WorkflowState) -> str:
     return "compliance"
 
 
-def route_after_decision(state: WorkflowState) -> str:
+def route_after_governor(state: WorkflowState) -> str:
+    if state.get("recommendation") == "SELF_CORRECT":
+        return "self_correct"
     return "human_review" if state.get("needs_human") else "end"
+
+
+def route_after_governor_self_correct(state: WorkflowState) -> str:
+    return state.get("self_correct_target") or "analyst"
+
+
+def governor_self_correct_node(incoming: WorkflowState) -> WorkflowState:
+    """Transition node: resets downstream agents so the governor's SELF_CORRECT loop reruns."""
+    outer_tracer: Tracer | None = incoming.get("tracer")  # type: ignore[assignment]
+    state: WorkflowState = deepcopy(incoming)
+    target = state.get("self_correct_target") or "analyst"
+    retry_num = int(state.get("retries", 0)) + 1
+    receipt = state.get("fiduciary_guardrail_receipt", {})
+
+    span = outer_tracer.start_span(
+        "retry", "governor_self_correct",
+        agent="orchestrator",
+        retry_num=retry_num,
+        self_correct_target=target,
+        tfgs_score=receipt.get("tfgs_score"),
+        reason=f"TFGS {receipt.get('tfgs_score')}, retry {retry_num}/{state.get('max_retries', 2)}",
+    ) if outer_tracer else None
+
+    agents_to_reset = (
+        ["analyst", "compliance", "governance", "finance", "decision_owner"]
+        if target == "analyst"
+        else ["compliance", "governance", "finance", "decision_owner"]
+    )
+    completed = [a for a in state.get("completed_agents", []) if a not in agents_to_reset]
+    state["completed_agents"] = completed
+    agent_results = {k: v for k, v in state.get("agent_results", {}).items() if k not in agents_to_reset}
+    state["agent_results"] = agent_results
+
+    if target == "analyst":
+        state["hard_stops"] = list(state.get("ingress_errors", []))
+        state["warnings"] = []
+        state["conflicts"] = []
+        state["missing_fields"] = []
+
+    state["retries"] = retry_num
+    state["recommendation"] = "PENDING"
+    state["status"] = "RUNNING"
+
+    state.setdefault("events", []).append({
+        "agent": "orchestrator", "kind": "GOVERNOR_SELF_CORRECT",
+        "message": f"Fiduciary Governor triggered self-correction (target: {target}, retry {retry_num}/{state.get('max_retries', 2)})",
+        "details": {"target": target, "tfgs_score": receipt.get("tfgs_score"), "retry": retry_num},
+    })
+    AuditLogger(state["audit_path"]).append(
+        trace_id=state["trace_id"], event_type="GOVERNOR_SELF_CORRECT", actor="orchestrator",
+        payload={"target": target, "retry": retry_num, "tfgs_score": receipt.get("tfgs_score"), "reason": receipt.get("itemized_deductions")},
+    )
+
+    if outer_tracer:
+        if span:
+            outer_tracer.end_span(span, "ok")
+        outer_tracer.record_handoff(
+            "decision_owner", target, "GOVERNOR_SELF_CORRECT",
+            f"TFGS {receipt.get('tfgs_score')}, retry {retry_num}/{state.get('max_retries', 2)}",
+            {"deductions": receipt.get("itemized_deductions", [])},
+            f"governor → {target}: SELF_CORRECT retry {retry_num}/{state.get('max_retries', 2)}",
+        )
+        state["tracer"] = outer_tracer
+        state["spans"] = [s.to_dict() for s in outer_tracer.spans]
+        state["handoffs"] = list(outer_tracer.handoffs)
+        state["run_metrics"] = outer_tracer.metrics()
+
+    return state
 
 
 def build_graph():
@@ -264,13 +337,24 @@ def build_graph():
         builder.add_node(name, _agent_node(name))
     builder.add_node("data_repair", data_repair_node)
     builder.add_node("human_review", human_review_node)
+    builder.add_node("governor_self_correct", governor_self_correct_node)
     builder.add_edge(START, "analyst")
-    builder.add_conditional_edges("analyst", route_after_analyst, {"data_repair": "data_repair", "compliance": "compliance", "decision_owner": "decision_owner"})
+    builder.add_conditional_edges(
+        "analyst", route_after_analyst,
+        {"data_repair": "data_repair", "compliance": "compliance", "decision_owner": "decision_owner"},
+    )
     builder.add_edge("data_repair", "analyst")
     builder.add_edge("compliance", "governance")
     builder.add_edge("governance", "finance")
     builder.add_edge("finance", "decision_owner")
-    builder.add_conditional_edges("decision_owner", route_after_decision, {"human_review": "human_review", "end": END})
+    builder.add_conditional_edges(
+        "decision_owner", route_after_governor,
+        {"self_correct": "governor_self_correct", "human_review": "human_review", "end": END},
+    )
+    builder.add_conditional_edges(
+        "governor_self_correct", route_after_governor_self_correct,
+        {"analyst": "analyst", "compliance": "compliance"},
+    )
     builder.add_edge("human_review", END)
     return builder.compile()
 
@@ -292,6 +376,25 @@ def _fallback_run(state: WorkflowState) -> WorkflowState:
     else:
         for name in ("compliance", "governance", "finance", "decision_owner"):
             state = AGENTS[name].run(state)
+
+    # Handle governor SELF_CORRECT loops (bounded by max_retries)
+    _sc_loops = 0
+    while state.get("recommendation") == "SELF_CORRECT" and _sc_loops < int(state.get("max_retries", 2)):
+        _sc_loops += 1
+        state = governor_self_correct_node(state)
+        target = state.get("self_correct_target", "analyst")
+        if target == "analyst":
+            state = AGENTS["analyst"].run(state)
+            while (
+                state.get("missing_fields")
+                and state.get("agent_results", {}).get("analyst", {}).get("outcome") != "FAIL"
+                and state["retries"] < state["max_retries"]
+            ):
+                state = data_repair_node(state)
+                state = AGENTS["analyst"].run(state)
+        for name in ("compliance", "governance", "finance", "decision_owner"):
+            state = AGENTS[name].run(state)
+
     if state.get("needs_human"):
         state = human_review_node(state)
     return state
