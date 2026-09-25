@@ -54,6 +54,12 @@ class BaseAgent:
         status: str = "SUCCESS",
     ) -> None:
         state.setdefault("tool_calls", []).append(tool_trace(self.key, tool, inputs, summary, status))
+        tracer = state.get("tracer")
+        if tracer is not None:
+            span = tracer.start_span("tool", tool, agent=self.key, status=status,
+                                     summary=summary[:120] if summary else "")
+            span_status = "ok" if status in {"SUCCESS", "NOT_RUN"} else "error"
+            tracer.end_span(span, span_status)
 
     def _finish(self, state: WorkflowState, result: dict[str, Any]) -> WorkflowState:
         state.setdefault("agent_results", {})[self.key] = result
@@ -93,13 +99,32 @@ class BaseAgent:
         fallback: str,
         deterministic_outcome: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        return BedrockNarrativeEngine(state.get("model_mode", "offline")).explain(
+        text, model = BedrockNarrativeEngine(state.get("model_mode", "offline")).explain(
             system_prompt=AGENT_PROMPTS[self.key],
             agent_name=AGENT_LABELS[self.key],
             facts=facts,
             fallback=fallback,
             deterministic_outcome=deterministic_outcome,
         )
+        tracer = state.get("tracer")
+        if tracer is not None and model.get("provider") == "amazon-bedrock-converse":
+            latency = model.get("latency_ms", 0) or 0
+            span = tracer.start_span(
+                "llm", f"{self.key}/converse",
+                agent=self.key,
+                model_id=model.get("model_id"),
+                request_id=model.get("request_id"),
+                input_tokens=model.get("input_tokens", 0),
+                output_tokens=model.get("output_tokens", 0),
+                stop_reason=model.get("stop_reason"),
+                tool_use_count=model.get("tool_use_count", 0),
+                model_outcome_rejected=model.get("model_outcome_rejected", False),
+                fallback=model.get("fallback", False),
+            )
+            # Backdate start_ts so duration_ms reflects real Bedrock latency
+            span.start_ts = span.start_ts - latency / 1000.0
+            tracer.end_span(span, "ok")
+        return text, model
 
     def _audit(self, state: WorkflowState, event_type: str, payload: dict[str, Any]) -> None:
         path = state.get("audit_path")

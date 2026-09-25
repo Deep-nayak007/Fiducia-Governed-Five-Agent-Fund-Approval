@@ -11,7 +11,7 @@ import os
 import time
 from typing import Any
 
-DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-5-20271001:0"
+DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-5"
 
 # Map tool names to the deterministic_facts key whose value the tool should return
 _TOOL_TO_FACT_KEY: dict[str, str] = {
@@ -48,7 +48,7 @@ class BedrockNarrativeEngine:
         return self.mode.lower() == "bedrock"
 
     def health_check(self) -> bool:
-        """Try a minimal Converse call (1 token). Returns True on success, False on any failure."""
+        """Try a minimal Converse call. Returns True on success, False on any failure."""
         if not self.enabled:
             return False
         try:
@@ -60,14 +60,14 @@ class BedrockNarrativeEngine:
                 region_name=self.region,
                 config=Config(
                     connect_timeout=3.0,
-                    read_timeout=5.0,
+                    read_timeout=15.0,
                     retries={"max_attempts": 1, "mode": "standard"},
                 ),
             )
             client.converse(
                 modelId=self.model_id,
-                messages=[{"role": "user", "content": [{"text": "ping"}]}],
-                inferenceConfig={"maxTokens": 1},
+                messages=[{"role": "user", "content": [{"text": "Reply with one word: ok"}]}],
+                inferenceConfig={"maxTokens": 20},
             )
             return True
         except Exception:
@@ -119,7 +119,7 @@ class BedrockNarrativeEngine:
                 region_name=self.region,
                 config=Config(
                     connect_timeout=float(os.getenv("BEDROCK_CONNECT_TIMEOUT_SECONDS", "3")),
-                    read_timeout=float(os.getenv("BEDROCK_READ_TIMEOUT_SECONDS", "30")),
+                    read_timeout=float(os.getenv("BEDROCK_READ_TIMEOUT_SECONDS", "60")),
                     retries={"max_attempts": 2, "mode": "standard"},
                 ),
             )
@@ -143,11 +143,13 @@ class BedrockNarrativeEngine:
 
             tool_config: dict[str, Any] = {"tools": tools} if tools else {}
 
+            # No temperature — claude-sonnet-5 uses extended thinking by default,
+            # which is incompatible with temperature sampling.
             converse_kwargs: dict[str, Any] = {
                 "modelId": self.model_id,
                 "system": [{"text": system_prompt}],
                 "messages": messages,
-                "inferenceConfig": {"temperature": 0.0, "maxTokens": 512},
+                "inferenceConfig": {"maxTokens": 4096},
             }
             if tool_config:
                 converse_kwargs["toolConfig"] = tool_config
@@ -185,17 +187,20 @@ class BedrockNarrativeEngine:
                 # Append assistant message to conversation
                 messages.append(assistant_message)
 
+                content_blocks = assistant_message.get("content", [])
+
                 if stop_reason == "tool_use":
-                    # Collect tool_use blocks
+                    # toolUse blocks may appear anywhere; reasoningContent blocks
+                    # must be kept intact and re-sent in the assistant turn exactly
+                    # as returned — their signatures are verified server-side.
                     tool_results_content: list[dict] = []
-                    for block in assistant_message.get("content", []):
+                    for block in content_blocks:
                         if "toolUse" in block:
                             tool_use = block["toolUse"]
                             tool_use_id = tool_use["toolUseId"]
                             tool_name = tool_use["name"]
                             tools_called.append(tool_name)
 
-                            # Look up pre-computed value from deterministic_facts
                             fact_key = _TOOL_TO_FACT_KEY.get(tool_name)
                             fact_value = deterministic_facts.get(fact_key) if fact_key else None
 
@@ -204,15 +209,14 @@ class BedrockNarrativeEngine:
                                     "toolResult": {
                                         "toolUseId": tool_use_id,
                                         "content": [
-                                            {
-                                                "text": json.dumps(fact_value, default=str)
-                                            }
+                                            {"text": json.dumps(fact_value, default=str)}
                                         ],
                                     }
                                 }
                             )
 
-                    # Add user message with tool results
+                    # assistant_message is appended with full content (including
+                    # reasoningContent blocks) so the server can verify signatures.
                     messages.append(
                         {"role": "user", "content": tool_results_content}
                     )
@@ -220,24 +224,30 @@ class BedrockNarrativeEngine:
                     continue
 
                 elif stop_reason == "end_turn":
-                    # Parse final text content as JSON
-                    for block in assistant_message.get("content", []):
+                    # Skip reasoningContent and any non-text blocks; take the first text block.
+                    for block in content_blocks:
                         if "text" in block:
                             final_text = block["text"].strip()
                             break
-                    # Try to parse JSON response
+                    # Strip markdown code fences if the model wraps JSON in them
+                    stripped = final_text.strip("`").strip()
+                    if stripped.startswith("json"):
+                        stripped = stripped[4:].strip()
                     try:
-                        parsed = json.loads(final_text)
+                        parsed = json.loads(stripped)
                         final_outcome = str(parsed.get("outcome", "")).strip()
                         final_rationale = str(parsed.get("rationale", "")).strip()
                         final_evidence_refs = parsed.get("evidence_refs", [])
                     except (json.JSONDecodeError, AttributeError):
-                        # Model didn't return valid JSON — use raw text as rationale
                         final_rationale = final_text
                         final_outcome = None
                     break
                 else:
-                    # Unexpected stop reason — break
+                    # max_tokens or other stop — surface raw text if present
+                    for block in content_blocks:
+                        if "text" in block:
+                            final_rationale = block["text"].strip()
+                            break
                     break
 
             latency_ms = round((time.time() - t0) * 1000, 1)

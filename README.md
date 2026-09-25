@@ -106,11 +106,9 @@ To enable Bedrock explanations:
 
 ```bash
 export AWS_REGION=us-east-1
-export BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-5-20271001:0
+export BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-5
 .venv/bin/streamlit run app.py
 ```
-
-> Note: Verify the exact Sonnet 5 model ID against the AWS Bedrock console in your region before deploying.
 
 The process reads environment variables directly; it does not automatically load a `.env` file.
 

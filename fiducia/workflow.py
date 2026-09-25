@@ -116,23 +116,42 @@ def create_initial_state(
 
 def _agent_node(name: str):
     def invoke(state: WorkflowState) -> WorkflowState:
-        tracer: Tracer | None = state.get("tracer")  # type: ignore[assignment]
-        span = tracer.start_span("agent", name) if tracer else None
+        outer_tracer: Tracer | None = state.get("tracer")  # type: ignore[assignment]
+        # Snapshot current span IDs so we can detect spans added inside the agent
+        # (BaseAgent._start deepcopies state, giving the inner loop its own Tracer clone)
+        outer_span_ids_before = {s.span_id for s in outer_tracer.spans} if outer_tracer else set()
+        agent_span = outer_tracer.start_span("agent", name) if outer_tracer else None
+        run_status = "ok"
+        result_state = state
         try:
             result_state = AGENTS[name].run(state)
-            status = "ok"
         except Exception:
-            result_state = state
-            status = "error"
+            run_status = "error"
             raise
         finally:
-            if tracer and span:
+            if outer_tracer and agent_span:
                 agent_result = result_state.get("agent_results", {}).get(name, {})
-                span.attributes["outcome"] = agent_result.get("outcome")
-                span.attributes["confidence"] = agent_result.get("confidence")
-                tracer.end_span(span, status)
-                result_state["spans"] = [s.to_dict() for s in tracer.spans]
-                result_state["run_metrics"] = tracer.metrics()
+                agent_span.attributes["outcome"] = agent_result.get("outcome")
+                agent_span.attributes["confidence"] = agent_result.get("confidence")
+                outer_tracer.end_span(agent_span, run_status)
+                # Merge tool/llm spans that accumulated in the deepcopied inner tracer
+                inner_tracer: Tracer | None = result_state.get("tracer")  # type: ignore[assignment]
+                if inner_tracer and inner_tracer is not outer_tracer:
+                    seen = {s.span_id for s in outer_tracer.spans}
+                    for s in inner_tracer.spans:
+                        if s.span_id not in seen and s.span_id not in outer_span_ids_before:
+                            s.parent_span_id = agent_span.span_id
+                            outer_tracer.spans.append(s)
+                    for h in inner_tracer.handoffs:
+                        key = (h.get("from"), h.get("to"), h.get("ts"))
+                        if not any(
+                            (x.get("from"), x.get("to"), x.get("ts")) == key
+                            for x in outer_tracer.handoffs
+                        ):
+                            outer_tracer.handoffs.append(h)
+                result_state["tracer"] = outer_tracer
+                result_state["spans"] = [s.to_dict() for s in outer_tracer.spans]
+                result_state["run_metrics"] = outer_tracer.metrics()
         return result_state
 
     invoke.__name__ = f"{name}_node"
@@ -140,16 +159,17 @@ def _agent_node(name: str):
 
 
 def data_repair_node(incoming: WorkflowState) -> WorkflowState:
+    # Grab the outer tracer BEFORE deepcopy so spans survive the clone
+    outer_tracer: Tracer | None = incoming.get("tracer")  # type: ignore[assignment]
     state: WorkflowState = deepcopy(incoming)
-    tracer: Tracer | None = state.get("tracer")  # type: ignore[assignment]
     retry_num = int(state.get("retries", 0)) + 1
     missing_preview = ", ".join(state.get("missing_fields", [])[:3])
-    span = tracer.start_span(
+    span = outer_tracer.start_span(
         "retry", "data_repair",
         agent="orchestrator",
         retry_num=retry_num,
         reason=f"{missing_preview} missing, retry {retry_num}/{state.get('max_retries', 2)}",
-    ) if tracer else None
+    ) if outer_tracer else None
     missing = list(state.get("missing_fields", []))
     reference = lookup_fund_reference(str(state["fund"].get("ticker", "")))
     repaired: dict[str, Any] = {}
@@ -186,41 +206,40 @@ def data_repair_node(incoming: WorkflowState) -> WorkflowState:
     state.setdefault("tool_calls", []).append(tool_trace("orchestrator", "reference_catalog_lookup", {"ticker": state["fund"].get("ticker"), "fields": missing}, f"repaired={sorted(repaired)}", "SUCCESS" if repaired else "NO_MATCH"))
     state.setdefault("events", []).append({"agent": "orchestrator", "kind": "SELF_CORRECTION", "message": f"Enrichment retry {state['retries']}/{state['max_retries']}", "details": attempt})
     AuditLogger(state["audit_path"]).append(trace_id=state["trace_id"], event_type="SELF_CORRECTION", actor="orchestrator", payload=attempt)
-    if tracer and span:
-        tracer.end_span(span, "ok")
-        if tracer.handoffs or tracer.spans:
-            state["spans"] = [s.to_dict() for s in tracer.spans]
-            state["handoffs"] = list(tracer.handoffs)
-            state["run_metrics"] = tracer.metrics()
-        # Record handoff back to analyst
-        tracer.record_handoff(
+    if outer_tracer and span:
+        outer_tracer.end_span(span, "ok")
+        outer_tracer.record_handoff(
             "data_repair", "analyst", "RETRY_ANALYST",
             f"retry {state['retries']}/{state['max_retries']} after repair of {sorted(repaired) or 'nothing'}",
             {"repaired": sorted(repaired), "missing_remaining": state.get("missing_fields", [])},
             f"data_repair complete, retry {state['retries']}/{state['max_retries']}",
         )
-        state["handoffs"] = list(tracer.handoffs)
+        state["tracer"] = outer_tracer
+        state["spans"] = [s.to_dict() for s in outer_tracer.spans]
+        state["handoffs"] = list(outer_tracer.handoffs)
+        state["run_metrics"] = outer_tracer.metrics()
     return state
 
 
 def human_review_node(incoming: WorkflowState) -> WorkflowState:
+    outer_tracer: Tracer | None = incoming.get("tracer")  # type: ignore[assignment]
     state: WorkflowState = deepcopy(incoming)
-    tracer: Tracer | None = state.get("tracer")  # type: ignore[assignment]
-    span = tracer.start_span(
+    span = outer_tracer.start_span(
         "hitl", "human_checkpoint",
         recommendation=state.get("recommendation"),
         risk_score=state.get("risk_score"),
         reasons=state.get("human_reasons", []),
-    ) if tracer else None
+    ) if outer_tracer else None
     state["active_agent"] = "human_review"
     state["status"] = "AWAITING_HUMAN_REVIEW"
     state.setdefault("events", []).append({"agent": "human_review", "kind": "WORKFLOW_PAUSED", "message": "Workflow paused at governed human checkpoint", "details": {"reasons": state.get("human_reasons", [])}})
     AuditLogger(state["audit_path"]).append(trace_id=state["trace_id"], event_type="HITL_REQUIRED", actor="orchestrator", payload={"recommendation": state.get("recommendation"), "risk_score": state.get("risk_score"), "reasons": state.get("human_reasons", [])})
-    if tracer and span:
-        tracer.end_span(span, "ok")
-        state["spans"] = [s.to_dict() for s in tracer.spans]
-        state["handoffs"] = list(tracer.handoffs)
-        state["run_metrics"] = tracer.metrics()
+    if outer_tracer and span:
+        outer_tracer.end_span(span, "ok")
+        state["tracer"] = outer_tracer
+        state["spans"] = [s.to_dict() for s in outer_tracer.spans]
+        state["handoffs"] = list(outer_tracer.handoffs)
+        state["run_metrics"] = outer_tracer.metrics()
     return state
 
 
