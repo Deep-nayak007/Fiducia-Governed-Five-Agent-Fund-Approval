@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "description": "Column mapping from official TIAA challenge dataset to Fiducia fund schema",
+  "column_map": {
+    "Ticker": "ticker",
+    "Fund Name": "fund_name",
+    "Fund Type": "fund_type",
+    "Asset Class": "asset_class",
+    "NAV": "nav",
+    "Expense Ratio": "expense_ratio",
+    "Sharpe Ratio": "sharpe_ratio",
+    "12b-1 Fee": "fee_12b1",
+    "Distribution Fee": "distribution_12b1_fee",
+    "Service Fee": "service_fee",
+    "Sales Load": "sales_load_pct",
+    "Turnover Rate": "turnover_rate",
+    "AUM (Millions)": "aum_millions",
+    "Track Record (Years)": "track_record_years",
+    "Risk Score": "risk_score",
+    "Regulatory Status": "regulatory_status",
+    "As Of Date": "as_of_date"
+  },
+  "blank_policy": "blank_is_not_zero",
+  "unmapped_required_fields": "routed_through_repair_fail_closed"
+}

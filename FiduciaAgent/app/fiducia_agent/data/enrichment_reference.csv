@@ -1,0 +1,11 @@
+ticker,fund_name,fund_type,asset_class,nav,expense_ratio,sharpe_ratio,fee_12b1,distribution_12b1_fee,service_fee,sales_load_pct,turnover_rate,aum_millions,track_record_years,risk_score,regulatory_status,as_of_date,source_conflict,evidence_note
+SUNX,Sunstone S&P 500 Index,Mutual Fund,US Equity Index,52.41,0.06,1.12,0.00,0.00,0.00,0.00,4.0,18400,12.0,5,Clear,2026-09-15,false,Validated synthetic prospectus extract
+AZQ,Arizona Quality Equity ETF,ETF,US Equity Index,103.18,0.09,1.05,0.00,0.00,0.00,0.00,8.0,6200,7.0,5,Clear,2026-09-12,false,Validated synthetic prospectus extract
+RET2045,Horizon 2045 Retirement Fund,Mutual Fund,Target Date,28.74,0.48,0.86,0.00,0.00,0.00,0.00,22.0,9700,9.0,6,Clear,2026-09-11,false,Validated synthetic prospectus extract
+ALPHX,Alpha Select Growth,Mutual Fund,US Equity Active,41.90,0.88,0.71,0.25,0.00,0.25,0.00,92.0,850,8.0,7,Clear,2026-09-10,false,Validated synthetic prospectus extract
+NEWB,NewBridge Core Bond ETF,ETF,Investment Grade Bond,49.22,0.29,0.64,0.00,0.00,0.00,0.00,31.0,140,1.4,3,Clear,2026-09-18,false,Validated synthetic prospectus extract
+SPECX,Speculative Alternative Opportunities,Mutual Fund,Other,16.08,1.75,0.31,0.50,0.25,0.25,0.00,210.0,65,4.0,9,Under Review,2026-09-09,false,Validated synthetic prospectus extract
+DATA,DataGap Total Market ETF,ETF,US Equity Index,88.63,0.07,1.01,0.00,0.00,0.00,0.00,6.0,4100,5.0,5,Clear,2026-09-17,false,Approved catalog supplied the missing Sharpe ratio
+CONFX,Consensus International Equity,Mutual Fund,International Equity,35.16,0.83,0.77,0.20,0.00,0.20,0.00,74.0,640,6.0,7,Clear,2026-09-14,true,Conflict remains and cannot be repaired autonomously
+INJX,Injected Note Equity ETF,ETF,US Equity Index,61.22,0.07,1.08,0.00,0.00,0.00,0.00,5.0,3200,6.0,5,Clear,2026-09-16,false,Approved catalog contains no executable instructions
+BLANK,Unresolved Fee Evidence Fund,Mutual Fund,US Equity Active,23.44,0.62,0.73,,0.00,,0.00,47.0,520,5.0,6,Clear,2026-09-13,false,Required fee evidence remains absent

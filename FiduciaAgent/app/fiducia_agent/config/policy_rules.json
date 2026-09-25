@@ -1,0 +1,122 @@
+{
+  "metadata": {
+    "policy_name": "Fiducia Illustrative Retirement Plan Fund Policy",
+    "version": "2026.09-demo.1",
+    "effective_date": "2026-09-22",
+    "owner": "Demo Investment Policy Committee",
+    "authority_type": "illustrative_internal_policy",
+    "scope": "Synthetic mutual-fund and ETF retirement-plan approval scenario",
+    "approved_by": "Hackathon demo policy owner",
+    "purpose": "Synthetic hackathon policy; not legal, fiduciary, or investment advice."
+  },
+  "data_quality": {
+    "required_fields": [
+      "ticker",
+      "fund_name",
+      "fund_type",
+      "asset_class",
+      "nav",
+      "expense_ratio",
+      "sharpe_ratio",
+      "fee_12b1",
+      "distribution_12b1_fee",
+      "service_fee",
+      "sales_load_pct",
+      "turnover_rate",
+      "aum_millions",
+      "track_record_years",
+      "risk_score",
+      "regulatory_status",
+      "as_of_date"
+    ],
+    "max_data_age_days": 120,
+    "max_enrichment_retries": 2,
+    "future_date_tolerance_days": 1,
+    "fee_reconciliation_tolerance_bps": 1,
+    "numeric_ranges": {
+      "nav": [0.0001, 1000000],
+      "expense_ratio": [0, 20],
+      "sharpe_ratio": [-10, 10],
+      "fee_12b1": [0, 5],
+      "distribution_12b1_fee": [0, 5],
+      "service_fee": [0, 5],
+      "sales_load_pct": [0, 10],
+      "turnover_rate": [0, 5000],
+      "aum_millions": [0, 10000000],
+      "track_record_years": [0, 200],
+      "risk_score": [1, 10]
+    }
+  },
+  "compliance": {
+    "illustrative_distribution_12b1_reference_max_pct": 0.75,
+    "illustrative_service_fee_reference_max_pct": 0.25,
+    "illustrative_combined_12b1_reference_max_pct": 1.0,
+    "internal_retirement_plan_12b1_max_pct": 0.25,
+    "allowed_regulatory_statuses": ["Clear"],
+    "allowed_fund_types": ["Mutual Fund", "ETF"],
+    "blocked_fund_types": ["Leveraged ETF", "Inverse ETF"],
+    "note": "Thresholds are configurable demo controls, not a legal conclusion. Counsel owns production rules."
+  },
+  "suitability": {
+    "allowed_asset_classes": [
+      "US Equity Index",
+      "US Equity Active",
+      "International Equity",
+      "Investment Grade Bond",
+      "Target Date",
+      "Balanced"
+    ],
+    "max_risk_score": 7,
+    "min_track_record_years": 3,
+    "min_aum_millions": 100,
+    "max_turnover_pct": 150
+  },
+  "fees": {
+    "expense_ratio_caps_pct": {
+      "US Equity Index": 0.25,
+      "US Equity Active": 0.75,
+      "International Equity": 0.85,
+      "Investment Grade Bond": 0.60,
+      "Target Date": 0.65,
+      "Balanced": 0.70,
+      "Other": 0.80
+    },
+    "benchmark_expense_ratio_pct": {
+      "US Equity Index": 0.08,
+      "US Equity Active": 0.55,
+      "International Equity": 0.50,
+      "Investment Grade Bond": 0.35,
+      "Target Date": 0.45,
+      "Balanced": 0.50,
+      "Other": 0.60
+    },
+    "default_investment_amount": 1000000,
+    "default_horizon_years": 20,
+    "illustrative_gross_return_pct": 6.0,
+    "front_end_load_requires_human_above_pct": 0.0
+  },
+  "human_in_the_loop": {
+    "minimum_auto_approval_confidence": 0.90,
+    "escalate_below_confidence": 0.85,
+    "auto_approval_max_risk_score": 24,
+    "mandatory_review_risk_score": 40,
+    "fee_boundary_bps": 5,
+    "all_rejections_require_human_confirmation": true,
+    "override_requires_reason": true,
+    "reject_to_approve_requires_two_person_control": true
+  },
+  "decision_scoring": {
+    "formula_version": "risk-v1.0",
+    "weights": {
+      "hard_stop": 55,
+      "failed_specialist": 18,
+      "source_conflict": 25,
+      "missing_required_field": 15,
+      "warning": 4,
+      "fee_boundary": 8
+    },
+    "reject_at_or_above": 60,
+    "escalate_at_or_above": 25,
+    "maximum_score": 100
+  }
+}
