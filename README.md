@@ -209,6 +209,14 @@ scripts/generate_pitch_deck.py PowerPoint generator
 - [Exact three-minute pitch and judge Q&A](docs/PITCH_SCRIPT.md)
 - [`Fiducia_Pitch_Deck.pptx`](Fiducia_Pitch_Deck.pptx) and [`Fiducia_Pitch_Deck.pdf`](Fiducia_Pitch_Deck.pdf)
 
+## Use case
+
+A mutual fund or ETF is nominated for a retirement portfolio. Instead of relying on a slow, email-driven review, Fiducia triggers an automated pipeline for data validation, compliance checks, fee analysis and plan-fit suitability. It preserves a transparent metadata trail for every decision and routes fiduciary anomalies to a named human reviewer.
+
+## Target users
+
+Enterprise portfolio managers, fiduciary officers and compliance teams responsible for retirement-plan investment reviews who need transparent automation, consistent controls and protection against unsupported AI conclusions.
+
 ## Orchestration Monitor
 
 The fifth tab in the Streamlit UI surfaces a live view of agent execution after each run:
